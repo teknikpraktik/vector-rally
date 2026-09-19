@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f1e8">
+<meta name="description" content="A grid racing game where you steer the acceleration, not the car.">
+<title>Vector Rally</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Vector Rally">
+<style>
+/* ---------------------------------------------------------------------------
+   Pencil on graph paper. Soft colours, but every piece of text is dark enough
+   to read from the back of a classroom: nothing here is under 4.5:1 on paper.
+--------------------------------------------------------------------------- */
+:root {
+  --paper: #f4f1e8;
+  --paper-bright: #fbf9f3;
+  --paper-shade: #e7e2d5;
+  --grid: #cdd7e0;
+  --grid-strong: #b3c2d0;
+  --ink: #26262a;          /* 14.3:1 on paper */
+  --ink-soft: #54585c;     /*  7.0:1 on paper */
+  --ink-faint: #8b8f93;    /*  3.0:1 — decoration only, never text */
+  --danger: #9d2f26;       /*  6.4:1 on paper */
+  --good: #2c6246;         /*  6.6:1 on paper */
+  --accent: #2f6f8f;       /*  5.1:1 on paper */
+  --pad: 10px;
+  --radius: 10px;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  overscroll-behavior: none;
+}
+
+body {
+  font-size: clamp(15px, 1.6vmin + 12px, 19px);
+  line-height: 1.45;
+}
+
+h1, h2, h3 { font-weight: 650; letter-spacing: 0.01em; margin: 0 0 0.3em; }
+h1 { font-size: clamp(28px, 6vmin, 52px); }
+h2 { font-size: clamp(19px, 2.6vmin + 10px, 26px); }
+p { margin: 0 0 0.7em; }
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper-bright);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  min-height: 44px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(38, 38, 42, 0.22);
+}
+button:hover { background: #fff; }
+button:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 rgba(38, 38, 42, 0.22); }
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button[disabled] { opacity: 0.45; cursor: default; box-shadow: none; }
+button.quiet { border-color: var(--ink-soft); box-shadow: none; padding: 8px 12px; }
+button.primary { background: var(--ink); color: var(--paper-bright); }
+button.primary:hover { background: #000; }
+
+input[type="text"] {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper-bright);
+  border: 2px solid var(--ink-soft);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 44px;
+  width: 100%;
+}
+input[type="text"]:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+
+.screen { display: none; }
+.screen.on { display: flex; }
+
+/* --- Setup ------------------------------------------------------------- */
+
+#setup {
+  flex-direction: column;
+  gap: 18px;
+  min-height: 100%;
+  padding: calc(var(--safe-t) + 20px) calc(var(--safe-r) + 20px)
+           calc(var(--safe-b) + 20px) calc(var(--safe-l) + 20px);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.tagline { color: var(--ink-soft); margin-top: -0.3em; }
+
+.panel {
+  background: var(--paper-bright);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 rgba(38, 38, 42, 0.18);
+  padding: 16px;
+}
+.panel + .panel { margin-top: 0; }
+
+fieldset { border: 0; margin: 0 0 18px; padding: 0; }
+fieldset:last-of-type { margin-bottom: 0; }
+legend { font-weight: 650; padding: 0 0 6px; }
+
+.hint { color: var(--ink-soft); font-size: 0.86em; }
+
+.track-list { display: grid; gap: 10px; }
+.track {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: start;
+  border: 2px solid var(--ink-soft);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  cursor: pointer;
+  background: var(--paper);
+}
+.track:has(input:checked) { border-color: var(--ink); background: #fff; box-shadow: inset 0 0 0 1px var(--ink); }
+.track input { margin-top: 6px; width: 20px; height: 20px; accent-color: var(--accent); }
+.track .name { font-weight: 650; }
+.track .blurb { color: var(--ink-soft); font-size: 0.86em; }
+
+.choice-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.choice { min-width: 48px; text-align: center; }
+.choice[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
+
+.players { display: grid; gap: 10px; }
+.player-row { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: center; }
+.swatch { width: 34px; height: 34px; }
+
+.about { color: var(--ink-soft); }
+.about summary { cursor: pointer; color: var(--ink); font-weight: 650; padding: 6px 0; }
+.about ul { margin: 0.4em 0 1em; padding-left: 1.2em; }
+.about li { margin-bottom: 0.3em; }
+kbd {
+  font: inherit;
+  font-size: 0.85em;
+  border: 1.5px solid var(--ink-soft);
+  border-bottom-width: 3px;
+  border-radius: 5px;
+  padding: 1px 6px;
+  background: var(--paper-bright);
+  white-space: nowrap;
+}
+
+.version-bar {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--ink-soft);
+  font-size: 0.85em;
+}
+
+/* --- Race -------------------------------------------------------------- */
+
+#race { flex-direction: column; height: 100dvh; }
+
+.hud {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  padding: calc(var(--safe-t) + 8px) calc(var(--safe-r) + 12px) 8px calc(var(--safe-l) + 12px);
+  border-bottom: 2px solid var(--ink);
+  background: var(--paper-bright);
+  font-size: 0.9em;
+}
+.hud .who { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+.hud .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: var(--paper);
+}
+.hud .spacer { flex: 1 1 auto; }
+.hud .muted { color: var(--ink-soft); }
+.hud b { font-variant-numeric: tabular-nums; }
+
+.board { position: relative; flex: 1 1 auto; min-height: 0; }
+#board { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+
+.overlay { position: absolute; display: flex; gap: 8px; }
+
+.actions {
+  left: calc(var(--safe-l) + 10px);
+  bottom: calc(var(--safe-b) + 10px);
+  flex-wrap: wrap;
+  max-width: 45%;
+}
+
+.pad {
+  right: calc(var(--safe-r) + 10px);
+  bottom: calc(var(--safe-b) + 10px);
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: rgba(251, 249, 243, 0.82);
+  border: 2px solid var(--ink);
+  border-radius: 14px;
+  padding: 6px;
+  backdrop-filter: blur(2px);
+}
+.pad button {
+  width: 56px;
+  height: 52px;
+  min-height: 44px;
+  padding: 2px;
+  display: grid;
+  place-items: center;
+  gap: 0;
+  line-height: 1.05;
+  box-shadow: none;
+  border-width: 2px;
+}
+.pad .arrow { font-size: 17px; }
+.pad .vel { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
+.pad button[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
+.pad button[aria-pressed="true"] .vel { color: var(--paper-shade); }
+.pad button.warn { border-color: var(--danger); color: var(--danger); }
+.pad button.warn .vel { color: var(--danger); }
+.pad button[aria-pressed="true"].warn { background: var(--danger); color: var(--paper-bright); }
+.pad button[aria-pressed="true"].warn .vel { color: var(--paper-bright); }
+.pad button.dead {
+  opacity: 0.4;
+  border-style: dashed;
+  text-decoration: line-through;
+  cursor: default;
+}
+
+.banner {
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  max-width: min(90%, 460px);
+  background: var(--paper-bright);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  font-size: 0.9em;
+  text-align: center;
+  box-shadow: 2px 2px 0 rgba(38, 38, 42, 0.18);
+}
+.banner.bad { border-color: var(--danger); color: var(--danger); }
+.banner[hidden] { display: none; }
+
+.results {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(244, 241, 232, 0.92);
+  padding: 20px;
+}
+.results[hidden] { display: none; }
+.results .card {
+  background: var(--paper-bright);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 4px 4px 0 rgba(38, 38, 42, 0.2);
+  padding: 20px;
+  max-width: 520px;
+  width: 100%;
+  max-height: 100%;
+  overflow: auto;
+}
+.results ol { margin: 0 0 16px; padding-left: 1.3em; }
+.results li { margin-bottom: 6px; }
+
+.tools {
+  flex: 0 0 auto;
+  border-top: 2px solid var(--ink);
+  background: var(--paper-bright);
+  padding: 6px calc(var(--safe-r) + 12px) calc(var(--safe-b) + 6px) calc(var(--safe-l) + 12px);
+  font-size: 0.85em;
+}
+.tools summary { cursor: pointer; font-weight: 650; padding: 4px 0; }
+.tools .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.tools textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  width: 100%;
+  min-height: 90px;
+  border: 2px solid var(--ink-soft);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+@media (max-width: 420px) {
+  .pad button { width: 50px; height: 48px; }
+  .actions { max-width: 40%; }
+}
+</style>
+</head>
+<body>
+
+<!-- ======================= Setup ======================= -->
+<section class="screen on" id="setup">
+  <header>
+    <h1>Vector Rally</h1>
+    <p class="tagline">You do not steer the car. You steer its acceleration.</p>
+  </header>
+
+  <div class="panel">
+    <fieldset>
+      <legend>Track</legend>
+      <div class="track-list" id="track-list"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Players</legend>
+      <div class="choice-row" id="player-count" role="group" aria-label="Number of players"></div>
+      <div class="players" id="players"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Laps</legend>
+      <div class="choice-row" id="laps" role="group" aria-label="Number of laps"></div>
+    </fieldset>
+
+    <button class="primary" id="start" style="width: 100%">Start race</button>
+  </div>
+
+  <details class="about panel">
+    <summary>How it works</summary>
+    <ul>
+      <li>Your car has a position and a velocity. Each turn you change the velocity
+        by −1, 0 or +1 in each direction — nine choices — and the car moves by the
+        new velocity.</li>
+      <li>Neither part of the velocity may go outside −5…5.</li>
+      <li>Everything the car passes over counts: walls, other cars, checkpoints and
+        the finish line. At speed 5 you cannot jump over any of them.</li>
+      <li>Leave the track and the car is put back on the last cell it reached, with
+        its speed reset to zero. That costs you the turn.</li>
+      <li>A lap counts when you cross the finish line the right way round with every
+        checkpoint collected in order.</li>
+    </ul>
+    <p><b>On a keyboard:</b> <kbd>1</kbd>–<kbd>9</kbd> (or the numpad) pick one of the
+      nine moves, laid out the way the numpad is. <kbd>Space</kbd> confirms,
+      <kbd>U</kbd> undoes, <kbd>O</kbd> zooms out to the whole track.</p>
+    <p><b>On a touch screen:</b> hold a button on the pad to see where the move goes,
+      and let go to take it. Sliding your finger off the button cancels. You can also
+      touch one of the nine marked cells on the track itself.</p>
+    <p><b>Install it:</b> on Android, Chrome's ⋮ menu → “Add to Home screen”. On iOS,
+      the share button in Safari's toolbar → scroll down → “Add to Home Screen”.
+      Load the game once with a network connection and it works offline afterwards.</p>
+  </details>
+
+  <div class="version-bar">
+    <span>Vector Rally v<span data-version>…</span> · built as a teaching example</span>
+    <button class="quiet" id="check-updates">Check for updates</button>
+  </div>
+</section>
+
+<!-- ======================= Race ======================= -->
+<section class="screen" id="race">
+  <div class="hud">
+    <span class="who" id="hud-who"></span>
+    <span class="muted" id="hud-progress"></span>
+    <span class="spacer"></span>
+    <span class="muted" id="hud-track"></span>
+    <span class="muted">v<span data-version>…</span></span>
+    <button class="quiet" id="to-menu">Menu</button>
+  </div>
+
+  <div class="board">
+    <canvas id="board"></canvas>
+
+    <div class="overlay banner" id="banner" hidden></div>
+
+    <div class="overlay actions">
+      <button class="quiet" id="undo" title="Undo the last move (U)">Undo</button>
+      <button class="quiet" id="overview" title="Zoom out to the whole track (O)">Overview</button>
+      <button class="quiet" id="end-race">End race</button>
+    </div>
+
+    <div class="overlay pad" id="pad" role="group" aria-label="Choose a move"></div>
+
+    <div class="results" id="results" hidden>
+      <div class="card">
+        <h2 id="results-title">Result</h2>
+        <ol id="results-list"></ol>
+        <div class="choice-row">
+          <button class="primary" id="again">Race again</button>
+          <button class="quiet" id="results-undo">Undo the last move</button>
+          <button class="quiet" id="results-menu">Back to the menu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <details class="tools">
+    <summary>Debug</summary>
+    <div class="row">
+      <button class="quiet" id="copy-state">Copy state as JSON</button>
+      <button class="quiet" id="load-state">Load state from JSON</button>
+      <span class="hint" id="debug-note"></span>
+    </div>
+    <textarea id="state-json" spellcheck="false" aria-label="Race state as JSON"></textarea>
+  </details>
+</section>
+
+<script src="./version.js"></script>
+<script type="module">
+import {
+  MAX_SPEED, MOVES, PLAYER_COLORS, PLAYER_SYMBOLS,
+  applyMove, createInitialState, endRace, isFinished, legalMoves, previewMove,
+  standings, stateFromJSON, stateToJSON, undoMove,
+} from './engine.js';
+import { getTrack, listTracks } from './tracks.js';
+
+const VERSION = self.APP_VERSION || 'dev';
+const MIN_CELL = 14;          // the camera never zooms in closer than this
+const MAX_CELL = 60;
+const $ = selector => document.querySelector(selector);
+
+for (const slot of document.querySelectorAll('[data-version]')) slot.textContent = VERSION;
+
+// ---------------------------------------------------------------------------
+// What the interface is currently showing. The race itself lives in `state`,
+// which only ever changes by being replaced with the result of an engine call.
+// ---------------------------------------------------------------------------
+
+const ui = {
+  state: null,
+  selected: null,        // the move being previewed, { ax, ay }
+  lastKey: null,
+  setup: { trackId: listTracks()[0].id, players: 2, laps: 3, names: ['P1', 'P2', 'P3', 'P4'] },
+  camera: { scale: 26, centre: [0, 0], mode: 'follow' },
+  pointers: new Map(),
+  pinch: null,
+  dragging: false,
+  padHeld: null,
+  confirmingEnd: false,
+  message: null,
+};
+
+const canvas = $('#board');
+const ctx = canvas.getContext('2d');
+const view = { width: 0, height: 0 };
+
+// ---------------------------------------------------------------------------
+// Setup screen
+// ---------------------------------------------------------------------------
+
+function buildSetup() {
+  const tracks = listTracks();
+  $('#track-list').innerHTML = tracks.map(track => `
+    <label class="track">
+      <input type="radio" name="track" value="${track.id}"
+        ${track.id === ui.setup.trackId ? 'checked' : ''}>
+      <span>
+        <span class="name">${escapeHtml(track.name)}</span>
+        <span class="blurb">${escapeHtml(track.blurb)}</span>
+      </span>
+    </label>`).join('');
+  $('#track-list').addEventListener('change', event => {
+    ui.setup.trackId = event.target.value;
+  });
+
+  $('#player-count').innerHTML = [1, 2, 3, 4].map(count =>
+    `<button class="choice quiet" data-count="${count}"
+      aria-pressed="${count === ui.setup.players}">${count}</button>`).join('');
+  $('#player-count').addEventListener('click', event => {
+    const button = event.target.closest('[data-count]');
+    if (!button) return;
+    ui.setup.players = Number(button.dataset.count);
+    refreshSetup();
+  });
+
+  $('#laps').innerHTML = Array.from({ length: 10 }, (unused, index) => index + 1).map(laps =>
+    `<button class="choice quiet" data-laps="${laps}"
+      aria-pressed="${laps === ui.setup.laps}">${laps}</button>`).join('');
+  $('#laps').addEventListener('click', event => {
+    const button = event.target.closest('[data-laps]');
+    if (!button) return;
+    ui.setup.laps = Number(button.dataset.laps);
+    refreshSetup();
+  });
+
+  $('#players').addEventListener('input', event => {
+    const field = event.target.closest('[data-player]');
+    if (field) ui.setup.names[Number(field.dataset.player)] = field.value;
+  });
+
+  refreshSetup();
+}
+
+function refreshSetup() {
+  for (const button of document.querySelectorAll('[data-count]')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.count) === ui.setup.players));
+  }
+  for (const button of document.querySelectorAll('[data-laps]')) {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.laps) === ui.setup.laps));
+  }
+  $('#players').innerHTML = Array.from({ length: ui.setup.players }, (unused, index) => `
+    <div class="player-row">
+      <svg class="swatch" viewBox="0 0 34 34" aria-hidden="true">
+        ${symbolMarkup(PLAYER_SYMBOLS[index], PLAYER_COLORS[index])}
+      </svg>
+      <input type="text" data-player="${index}" maxlength="12"
+        aria-label="Name of player ${index + 1}"
+        value="${escapeHtml(ui.setup.names[index])}">
+    </div>`).join('');
+}
+
+function symbolMarkup(symbol, color) {
+  const common = `fill="${color}" stroke="#26262a" stroke-width="2"`;
+  if (symbol === 'square') return `<rect x="7" y="7" width="20" height="20" ${common}/>`;
+  if (symbol === 'triangle') return `<polygon points="17,5 29,28 5,28" ${common}/>`;
+  if (symbol === 'diamond') return `<polygon points="17,4 30,17 17,30 4,17" ${common}/>`;
+  return `<circle cx="17" cy="17" r="11" ${common}/>`;
+}
+
+// ---------------------------------------------------------------------------
+// Starting and ending a race
+// ---------------------------------------------------------------------------
+
+/** The one place a number is plucked out of thin air. The engine never does. */
+function newSeed() {
+  const bits = new Uint32Array(1);
+  crypto.getRandomValues(bits);
+  return bits[0] % 2147483647;
+}
+
+function startRace() {
+  const players = Array.from({ length: ui.setup.players }, (unused, index) => ({
+    name: ui.setup.names[index] || `P${index + 1}`,
+    kind: 'human',
+  }));
+  ui.state = createInitialState({
+    trackId: ui.setup.trackId,
+    players,
+    laps: ui.setup.laps,
+    seed: newSeed(),
+    appVersion: VERSION,
+  });
+  ui.selected = null;
+  ui.camera = { scale: 26, centre: [0, 0], mode: 'follow' };
+  ui.confirmingEnd = false;
+  showScreen('race');
+  resize();
+  draw();
+}
+
+function showScreen(name) {
+  $('#setup').classList.toggle('on', name === 'setup');
+  $('#race').classList.toggle('on', name === 'race');
+}
+
+// ---------------------------------------------------------------------------
+// Making a move
+// ---------------------------------------------------------------------------
+
+function trapped() {
+  return ui.state && !isFinished(ui.state) && legalMoves(ui.state).length === 0;
+}
+
+function select(move) {
+  ui.selected = move;
+  draw();
+}
+
+function commit() {
+  if (!ui.state || isFinished(ui.state)) return;
+
+  if (trapped()) {
+    // Nowhere legal to go: the car crashes where it stands. Any move does it.
+    ui.state = applyMove(ui.state, { ax: 0, ay: 0 });
+    afterMove('Boxed in — the car crashes and loses its speed.');
+    return;
+  }
+  if (!ui.selected) return;
+
+  const outcome = previewMove(ui.state, ui.selected);
+  if (outcome.blocking) {
+    flash(`That move is blocked: ${outcome.reason}.`, true);
+    return;
+  }
+  const crashing = outcome.reason !== null;
+  ui.state = applyMove(ui.state, ui.selected);
+  afterMove(crashing ? `Off the track — speed back to zero (${outcome.reason}).` : null);
+}
+
+function afterMove(message) {
+  ui.selected = null;
+  ui.padHeld = null;
+  ui.confirmingEnd = false;
+  ui.message = message ? { text: message, bad: true } : null;
+  draw();
+  if (isFinished(ui.state)) showResults();
+}
+
+function undo() {
+  if (!ui.state || ui.state.history.length === 0) return;
+  ui.state = undoMove(ui.state);
+  ui.selected = null;
+  $('#results').hidden = true;
+  hideBanner();
+  draw();
+}
+
+// ---------------------------------------------------------------------------
+// Camera
+// ---------------------------------------------------------------------------
+
+function track() {
+  return getTrack(ui.state.trackId);
+}
+
+function fitScale() {
+  const board = track();
+  return Math.min(view.width / (board.width + 1), view.height / (board.height + 1));
+}
+
+function cellSize() {
+  if (ui.camera.mode === 'overview') return fitScale();
+  return Math.min(MAX_CELL, Math.max(MIN_CELL, ui.camera.scale));
+}
+
+function cameraCentre() {
+  if (ui.camera.mode === 'follow') {
+    const player = ui.state.players[ui.state.active];
+    const car = player && !player.finished ? player : ui.state.players[0];
+    return [car.pos[0] + 0.5, car.pos[1] + 0.5];
+  }
+  if (ui.camera.mode === 'overview') return [track().width / 2, track().height / 2];
+  return ui.camera.centre;
+}
+
+function origin() {
+  const size = cellSize();
+  const [cx, cy] = cameraCentre();
+  return [view.width / 2 - cx * size, view.height / 2 - cy * size];
+}
+
+function toScreen(x, y) {
+  const size = cellSize();
+  const [ox, oy] = origin();
+  return [ox + x * size, oy + y * size];
+}
+
+function toCell(screenX, screenY) {
+  const size = cellSize();
+  const [ox, oy] = origin();
+  return [Math.floor((screenX - ox) / size), Math.floor((screenY - oy) / size)];
+}
+
+function goFree() {
+  if (ui.camera.mode !== 'free') {
+    ui.camera.centre = cameraCentre();
+    if (ui.camera.mode === 'overview') ui.camera.scale = Math.max(MIN_CELL, fitScale());
+    ui.camera.mode = 'free';
+  }
+}
+
+function toggleOverview() {
+  ui.camera.mode = ui.camera.mode === 'overview' ? 'follow' : 'overview';
+  draw();
+}
+
+// ---------------------------------------------------------------------------
+// Drawing. Everything below is a pure function of the state and the camera.
+// ---------------------------------------------------------------------------
+
+/** A small, stable wobble per cell, so the ink looks drawn rather than printed. */
+function wobble(x, y, salt) {
+  let hash = (x * 374761393 + y * 668265263 + salt * 2246822519) | 0;
+  hash = Math.imul(hash ^ (hash >>> 13), 1274126177);
+  return (((hash ^ (hash >>> 16)) & 0xFFFF) / 0x8000 - 1);
+}
+
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  view.width = rect.width;
+  view.height = rect.height;
+  canvas.width = Math.max(1, Math.round(rect.width * ratio));
+  canvas.height = Math.max(1, Math.round(rect.height * ratio));
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+}
+
+function draw() {
+  if (!ui.state) return;
+  const board = track();
+  const size = cellSize();
+  const [ox, oy] = origin();
+
+  ctx.save();
+  ctx.fillStyle = '#f4f1e8';
+  ctx.fillRect(0, 0, view.width, view.height);
+
+  const from = [
+    Math.max(0, Math.floor(-ox / size) - 1),
+    Math.max(0, Math.floor(-oy / size) - 1),
+  ];
+  const to = [
+    Math.min(board.width - 1, Math.ceil((view.width - ox) / size) + 1),
+    Math.min(board.height - 1, Math.ceil((view.height - oy) / size) + 1),
+  ];
+
+  drawPaper(size, ox, oy);
+  drawSurface(board, size, from, to);
+  drawMarkings(board, size, from, to);
+  drawEdges(board, size, from, to);
+  for (const player of ui.state.players) drawTrace(player, size);
+  if (!isFinished(ui.state)) drawChoices(size);
+  for (const player of ui.state.players) drawCar(player, size);
+  ctx.restore();
+
+  drawHud();
+}
+
+function drawPaper(size, ox, oy) {
+  const step = Math.max(size, 12);
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = '#cdd7e0';
+  ctx.beginPath();
+  for (let x = ox % step; x < view.width; x += step) {
+    ctx.moveTo(Math.round(x) + 0.5, 0);
+    ctx.lineTo(Math.round(x) + 0.5, view.height);
+  }
+  for (let y = oy % step; y < view.height; y += step) {
+    ctx.moveTo(0, Math.round(y) + 0.5);
+    ctx.lineTo(view.width, Math.round(y) + 0.5);
+  }
+  ctx.stroke();
+}
+
+function drawSurface(board, size, from, to) {
+  ctx.fillStyle = '#fbf9f3';
+  for (let y = from[1]; y <= to[1]; y++) {
+    let run = null;
+    for (let x = from[0]; x <= to[0] + 1; x++) {
+      const drivable = x <= to[0] && board.isDrivable(x, y);
+      if (drivable && run === null) run = x;
+      if (!drivable && run !== null) {
+        const [sx, sy] = toScreen(run, y);
+        ctx.fillRect(sx, sy, (x - run) * size, size);
+        run = null;
+      }
+    }
+  }
+}
+
+function drawMarkings(board, size, from, to) {
+  for (let y = from[1]; y <= to[1]; y++) {
+    for (let x = from[0]; x <= to[0]; x++) {
+      const [sx, sy] = toScreen(x, y);
+      if (board.isFinish(x, y)) {
+        // A chequered band, the only place on the track with hard edges.
+        const squares = 3;
+        const unit = size / squares;
+        for (let row = 0; row < squares; row++) {
+          for (let column = 0; column < squares; column++) {
+            if ((row + column) % 2 !== 0) continue;
+            ctx.fillStyle = '#3b3b40';
+            ctx.fillRect(sx + column * unit, sy + row * unit, unit + 0.5, unit + 0.5);
+          }
+        }
+        continue;
+      }
+      const checkpoint = board.checkpointAt(x, y);
+      if (checkpoint !== 0) {
+        ctx.fillStyle = collectedBy(checkpoint) ? 'rgba(44, 98, 70, 0.20)' : 'rgba(47, 111, 143, 0.16)';
+        ctx.fillRect(sx, sy, size, size);
+      }
+    }
+  }
+
+  if (size < 12) return;
+  ctx.fillStyle = '#54585c';
+  ctx.font = `600 ${Math.round(size * 0.62)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let number = 1; number <= board.checkpointCount; number++) {
+    const cells = board.checkpointCells.get(number);
+    const middle = cells[Math.floor(cells.length / 2)];
+    if (middle[0] < from[0] || middle[0] > to[0] || middle[1] < from[1] || middle[1] > to[1]) continue;
+    const [sx, sy] = toScreen(middle[0] + 0.5, middle[1] + 0.5);
+    ctx.fillText(String(number), sx, sy);
+  }
+}
+
+/** Where the track stops, drawn as a wobbly pencil line rather than a border. */
+function drawEdges(board, size, from, to) {
+  ctx.strokeStyle = '#3b3b40';
+  ctx.lineWidth = Math.max(1.5, size * 0.09);
+  ctx.lineCap = 'round';
+  const nudge = Math.min(2, size * 0.08);
+  ctx.beginPath();
+  for (let y = from[1]; y <= to[1]; y++) {
+    for (let x = from[0]; x <= to[0]; x++) {
+      if (!board.isDrivable(x, y)) continue;
+      const [sx, sy] = toScreen(x, y);
+      const edges = [
+        [board.isDrivable(x, y - 1), sx, sy, sx + size, sy, 1],
+        [board.isDrivable(x, y + 1), sx, sy + size, sx + size, sy + size, 2],
+        [board.isDrivable(x - 1, y), sx, sy, sx, sy + size, 3],
+        [board.isDrivable(x + 1, y), sx + size, sy, sx + size, sy + size, 4],
+      ];
+      for (const [open, x0, y0, x1, y1, salt] of edges) {
+        if (open) continue;
+        ctx.moveTo(x0 + wobble(x, y, salt) * nudge, y0 + wobble(x, y, salt + 9) * nudge);
+        ctx.lineTo(x1 + wobble(x, y, salt + 17) * nudge, y1 + wobble(x, y, salt + 23) * nudge);
+      }
+    }
+  }
+  ctx.stroke();
+}
+
+function drawTrace(player, size) {
+  const points = [...player.trace, player.pos];
+  if (points.length < 2) return;
+  ctx.strokeStyle = fade(player.color, 0.55);
+  ctx.lineWidth = Math.max(1.5, size * 0.10);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  points.forEach(([x, y], index) => {
+    const [sx, sy] = toScreen(x + 0.5, y + 0.5);
+    if (index === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+  });
+  ctx.stroke();
+
+  if (size < 10) return;
+  ctx.fillStyle = fade(player.color, 0.65);
+  for (const [x, y] of points.slice(0, -1)) {
+    const [sx, sy] = toScreen(x + 0.5, y + 0.5);
+    ctx.beginPath();
+    ctx.arc(sx, sy, Math.max(1.2, size * 0.09), 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** The nine moves, always shown on the track, and the one being previewed. */
+function drawChoices(size) {
+  const player = ui.state.players[ui.state.active];
+  const radius = Math.max(3, size * 0.26);
+
+  for (const move of MOVES) {
+    const outcome = previewMove(ui.state, move);
+    const target = outcome.target
+      || [player.pos[0] + player.vel[0] + move.ax, player.pos[1] + player.vel[1] + move.ay];
+    const [sx, sy] = toScreen(target[0] + 0.5, target[1] + 0.5);
+    const chosen = ui.selected && ui.selected.ax === move.ax && ui.selected.ay === move.ay;
+
+    ctx.lineWidth = chosen ? Math.max(2, size * 0.12) : Math.max(1.2, size * 0.07);
+    ctx.setLineDash(outcome.blocking ? [3, 3] : []);
+    ctx.strokeStyle = outcome.blocking ? '#8b8f93' : outcome.reason ? '#9d2f26' : '#3b3b40';
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    if (outcome.blocking) {
+      const arm = radius * 0.72;
+      ctx.beginPath();
+      ctx.moveTo(sx - arm, sy - arm);
+      ctx.lineTo(sx + arm, sy + arm);
+      ctx.moveTo(sx + arm, sy - arm);
+      ctx.lineTo(sx - arm, sy + arm);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  if (!ui.selected) return;
+  const outcome = previewMove(ui.state, ui.selected);
+  const bad = outcome.blocking || outcome.reason !== null;
+  const colour = bad ? '#9d2f26' : '#26262a';
+
+  // The cells the car would actually pass through, and the line it would draw.
+  ctx.fillStyle = bad ? 'rgba(157, 47, 38, 0.16)' : 'rgba(47, 111, 143, 0.18)';
+  for (const [x, y] of outcome.cells) {
+    const [sx, sy] = toScreen(x, y);
+    ctx.fillRect(sx, sy, size, size);
+  }
+
+  const [fromX, fromY] = toScreen(player.pos[0] + 0.5, player.pos[1] + 0.5);
+  const landing = outcome.target || outcome.landing;
+  const [toX, toY] = toScreen(landing[0] + 0.5, landing[1] + 0.5);
+  ctx.strokeStyle = colour;
+  ctx.lineWidth = Math.max(2, size * 0.12);
+  ctx.setLineDash(bad ? [6, 4] : []);
+  ctx.beginPath();
+  ctx.moveTo(fromX, fromY);
+  ctx.lineTo(toX, toY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  if (outcome.reason) {
+    ctx.font = `600 ${Math.max(11, Math.round(size * 0.5))}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    const label = outcome.reason;
+    const width = ctx.measureText(label).width + 10;
+    const height = Math.max(14, size * 0.6);
+    ctx.fillStyle = 'rgba(251, 249, 243, 0.92)';
+    ctx.fillRect(toX - width / 2, toY - height - 8, width, height);
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(toX - width / 2, toY - height - 8, width, height);
+    ctx.fillStyle = colour;
+    ctx.fillText(label, toX, toY - 10);
+  }
+}
+
+function drawCar(player, size) {
+  const [sx, sy] = toScreen(player.pos[0] + 0.5, player.pos[1] + 0.5);
+  const radius = Math.max(4, size * 0.34);
+  const active = !isFinished(ui.state) && ui.state.players[ui.state.active].id === player.id;
+
+  ctx.save();
+  if (player.finished) ctx.globalAlpha = 0.45;
+  ctx.fillStyle = player.color;
+  ctx.strokeStyle = '#26262a';
+  ctx.lineWidth = Math.max(1.5, size * 0.09);
+  ctx.beginPath();
+  if (player.symbol === 'square') {
+    ctx.rect(sx - radius, sy - radius, radius * 2, radius * 2);
+  } else if (player.symbol === 'triangle') {
+    ctx.moveTo(sx, sy - radius * 1.15);
+    ctx.lineTo(sx + radius, sy + radius * 0.85);
+    ctx.lineTo(sx - radius, sy + radius * 0.85);
+    ctx.closePath();
+  } else if (player.symbol === 'diamond') {
+    ctx.moveTo(sx, sy - radius * 1.2);
+    ctx.lineTo(sx + radius * 1.2, sy);
+    ctx.lineTo(sx, sy + radius * 1.2);
+    ctx.lineTo(sx - radius * 1.2, sy);
+    ctx.closePath();
+  } else {
+    ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+  }
+  ctx.fill();
+  ctx.stroke();
+
+  if (active) {
+    ctx.strokeStyle = '#26262a';
+    ctx.lineWidth = Math.max(1.5, size * 0.07);
+    ctx.setLineDash([size * 0.18, size * 0.14]);
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius * 1.85, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+
+function fade(color, alpha) {
+  const value = color.replace('#', '');
+  const number = parseInt(value, 16);
+  const r = (number >> 16) & 255;
+  const g = (number >> 8) & 255;
+  const b = number & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function collectedBy(number) {
+  const player = ui.state.players[ui.state.active];
+  return player ? player.checkpoints.includes(number) : false;
+}
+
+// ---------------------------------------------------------------------------
+// The parts of the interface that are ordinary HTML
+// ---------------------------------------------------------------------------
+
+function drawHud() {
+  const board = track();
+  const player = ui.state.players[ui.state.active];
+  const done = isFinished(ui.state);
+
+  $('#hud-who').innerHTML = done
+    ? '<span class="chip">Race over</span>'
+    : `<span class="chip">
+        <svg width="18" height="18" viewBox="0 0 34 34" aria-hidden="true">
+          ${symbolMarkup(player.symbol, player.color)}
+        </svg>${escapeHtml(player.name)}</span>`;
+
+  $('#hud-progress').innerHTML = done ? '' : [
+    `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`,
+    `lap <b>${Math.min(player.lap + 1, ui.state.laps)}/${ui.state.laps}</b>`,
+    `checkpoints <b>${player.checkpoints.length}/${board.checkpointCount}</b>`,
+    `crashes <b>${player.crashes}</b>`,
+    `turn <b>${ui.state.turn + 1}</b>`,
+  ].join(' · ');
+
+  $('#hud-track').textContent = board.name;
+  $('#undo').disabled = ui.state.history.length === 0;
+  $('#end-race').textContent = ui.confirmingEnd ? 'Really end it?' : 'End race';
+
+  drawPad();
+  updateBanner();
+}
+
+const ARROWS = ['↖', '↑', '↗', '←', '•', '→', '↙', '↓', '↘'];
+
+/**
+ * The pad is built once and then only updated. Replacing the buttons while a
+ * finger is on one of them loses the release: the element the touch started
+ * on would no longer exist, and the move would never be taken.
+ */
+function buildPad() {
+  $('#pad').innerHTML = MOVES.map((move, index) => `
+    <button data-move="${index}">
+      <span class="arrow">${ARROWS[index]}</span>
+      <span class="vel"></span>
+    </button>`).join('');
+}
+
+function drawPad() {
+  const done = isFinished(ui.state);
+  for (const [index, move] of MOVES.entries()) {
+    const button = $(`#pad [data-move="${index}"]`);
+    const label = button.querySelector('.vel');
+    if (done) {
+      button.className = 'dead';
+      button.disabled = true;
+      label.textContent = '';
+      continue;
+    }
+    const outcome = previewMove(ui.state, move);
+    const [vx, vy] = outcome.velocity;
+    const chosen = ui.selected && ui.selected.ax === move.ax && ui.selected.ay === move.ay;
+    button.disabled = false;
+    button.className = [
+      outcome.blocking ? 'dead' : '',
+      outcome.reason && !outcome.blocking ? 'warn' : '',
+    ].join(' ').trim();
+    button.setAttribute('aria-pressed', String(Boolean(chosen)));
+    button.setAttribute('aria-label',
+      `speed ${vx}, ${vy}${outcome.reason ? `, ${outcome.reason}` : ''}`);
+    label.textContent = `${vx}, ${vy}`;
+  }
+}
+
+/** One message at a time, and the ones the player cannot ignore come first. */
+function updateBanner() {
+  const banner = $('#banner');
+  const player = isFinished(ui.state) ? null : ui.state.players[ui.state.active];
+  let text = null;
+  let bad = false;
+
+  if (trapped()) {
+    text = 'Nowhere legal to go — the car crashes where it stands. Press space.';
+    bad = true;
+  } else if (ui.message) {
+    text = ui.message.text;
+    bad = ui.message.bad;
+  } else if (player && ui.state.history.length < 2
+    && player.vel[0] === 0 && player.vel[1] === 0) {
+    text = 'You choose the acceleration. The car then moves by its whole new speed.';
+  }
+
+  banner.textContent = text || '';
+  banner.classList.toggle('bad', bad);
+  banner.hidden = text === null;
+}
+
+function flash(message, bad = false) {
+  ui.message = { text: message, bad };
+  updateBanner();
+}
+
+function hideBanner() {
+  ui.message = null;
+  updateBanner();
+}
+
+function showResults() {
+  const list = standings(ui.state);
+  $('#results-title').textContent = ui.state.status === 'ended' ? 'Race stopped' : 'Result';
+  $('#results-list').innerHTML = list.map(({ player, of }) => `
+    <li><b>${escapeHtml(player.name)}</b> —
+      ${player.finished
+        ? `finished on turn ${player.finishTurn + 1}`
+        : `lap ${player.lap + 1}, ${player.checkpoints.length}/${of} checkpoints`},
+      ${player.crashes} crash${player.crashes === 1 ? '' : 'es'}</li>`).join('');
+  $('#results').hidden = false;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, character => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character]));
+}
+
+// ---------------------------------------------------------------------------
+// Input
+// ---------------------------------------------------------------------------
+
+$('#start').addEventListener('click', startRace);
+$('#to-menu').addEventListener('click', () => showScreen('setup'));
+$('#results-menu').addEventListener('click', () => {
+  $('#results').hidden = true;
+  showScreen('setup');
+});
+$('#again').addEventListener('click', () => {
+  $('#results').hidden = true;
+  startRace();
+});
+$('#undo').addEventListener('click', undo);
+$('#results-undo').addEventListener('click', undo);
+$('#overview').addEventListener('click', toggleOverview);
+$('#end-race').addEventListener('click', () => {
+  if (!ui.confirmingEnd) {
+    ui.confirmingEnd = true;
+    drawHud();
+    return;
+  }
+  ui.state = endRace(ui.state);
+  ui.confirmingEnd = false;
+  draw();
+  showResults();
+});
+
+// The pad: hold to preview, let go to take the move. Sliding a finger off the
+// button before letting go cancels it — which is why the button under the
+// pointer is looked up again on release rather than trusting the event target,
+// since a touch keeps sending its events to the button it started on.
+$('#pad').addEventListener('pointerdown', event => {
+  const button = event.target.closest('[data-move]');
+  if (!button || button.disabled) return;
+  ui.padHeld = Number(button.dataset.move);
+  select(MOVES[ui.padHeld]);
+});
+$('#pad').addEventListener('pointerup', event => {
+  if (ui.padHeld === null) return;
+  const under = document.elementFromPoint(event.clientX, event.clientY);
+  const button = under && under.closest('[data-move]');
+  if (button && Number(button.dataset.move) === ui.padHeld) commit();
+  ui.padHeld = null;
+});
+$('#pad').addEventListener('pointercancel', () => { ui.padHeld = null; });
+$('#pad').addEventListener('pointerover', event => {
+  if (event.pointerType !== 'mouse') return;
+  const button = event.target.closest('[data-move]');
+  if (button) select(MOVES[Number(button.dataset.move)]);
+});
+
+// The track itself: touch one of the nine marked cells, or drag and pinch.
+canvas.addEventListener('pointerdown', event => {
+  canvas.setPointerCapture(event.pointerId);
+  ui.pointers.set(event.pointerId, [event.clientX, event.clientY]);
+  if (ui.pointers.size === 2) {
+    const [a, b] = [...ui.pointers.values()];
+    ui.pinch = { distance: Math.hypot(a[0] - b[0], a[1] - b[1]), scale: cellSize() };
+    return;
+  }
+  const move = moveAt(event);
+  if (move) {
+    select(move);
+    ui.dragging = false;
+  } else {
+    ui.dragging = true;
+  }
+});
+
+canvas.addEventListener('pointermove', event => {
+  if (!ui.pointers.has(event.pointerId)) return;
+  const previous = ui.pointers.get(event.pointerId);
+  ui.pointers.set(event.pointerId, [event.clientX, event.clientY]);
+
+  if (ui.pinch && ui.pointers.size === 2) {
+    const [a, b] = [...ui.pointers.values()];
+    const distance = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    goFree();
+    ui.camera.scale = Math.min(MAX_CELL, Math.max(MIN_CELL,
+      ui.pinch.scale * (distance / ui.pinch.distance)));
+    draw();
+    return;
+  }
+  if (ui.dragging) {
+    goFree();
+    const size = cellSize();
+    ui.camera.centre = [
+      ui.camera.centre[0] - (event.clientX - previous[0]) / size,
+      ui.camera.centre[1] - (event.clientY - previous[1]) / size,
+    ];
+    draw();
+    return;
+  }
+  if (ui.selected) {
+    const move = moveAt(event);
+    if (move) select(move);
+  }
+});
+
+function releasePointer(event) {
+  const wasDragging = ui.dragging;
+  ui.pointers.delete(event.pointerId);
+  if (ui.pointers.size < 2) ui.pinch = null;
+  if (ui.pointers.size > 0) return;
+  ui.dragging = false;
+  if (wasDragging || !ui.selected) return;
+  const move = moveAt(event);
+  if (move && ui.selected.ax === move.ax && ui.selected.ay === move.ay) commit();
+}
+
+canvas.addEventListener('pointerup', releasePointer);
+canvas.addEventListener('pointercancel', event => {
+  ui.pointers.delete(event.pointerId);
+  ui.pinch = null;
+  ui.dragging = false;
+});
+
+canvas.addEventListener('wheel', event => {
+  event.preventDefault();
+  goFree();
+  ui.camera.scale = Math.min(MAX_CELL, Math.max(MIN_CELL,
+    cellSize() * (event.deltaY < 0 ? 1.1 : 0.9)));
+  draw();
+}, { passive: false });
+
+/** Which of the nine moves, if any, the pointer is over on the track. */
+function moveAt(event) {
+  if (!ui.state || isFinished(ui.state)) return null;
+  const rect = canvas.getBoundingClientRect();
+  const [cellX, cellY] = toCell(event.clientX - rect.left, event.clientY - rect.top);
+  const player = ui.state.players[ui.state.active];
+  for (const move of MOVES) {
+    const x = player.pos[0] + player.vel[0] + move.ax;
+    const y = player.pos[1] + player.vel[1] + move.ay;
+    if (x === cellX && y === cellY) return move;
+  }
+  return null;
+}
+
+const KEYS = {
+  Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4,
+  Numpad6: 5, Numpad1: 6, Numpad2: 7, Numpad3: 8,
+  Digit7: 0, Digit8: 1, Digit9: 2, Digit4: 3, Digit5: 4,
+  Digit6: 5, Digit1: 6, Digit2: 7, Digit3: 8,
+};
+
+window.addEventListener('keydown', event => {
+  if (!$('#race').classList.contains('on')) return;
+  const focused = document.activeElement;
+  if (focused && focused.matches('input, textarea')) return;
+
+  if (event.code in KEYS) {
+    event.preventDefault();
+    const index = KEYS[event.code];
+    if (ui.lastKey === index && ui.selected) commit();
+    else select(MOVES[index]);
+    ui.lastKey = index;
+    return;
+  }
+  if (event.code === 'Space' || event.code === 'Enter' || event.code === 'NumpadEnter') {
+    event.preventDefault();
+    commit();
+    ui.lastKey = null;
+    return;
+  }
+  if (event.key === 'u' || event.key === 'U') undo();
+  if (event.key === 'o' || event.key === 'O') toggleOverview();
+});
+
+window.addEventListener('resize', () => {
+  if (!ui.state) return;
+  resize();
+  draw();
+});
+
+// ---------------------------------------------------------------------------
+// Debug panel: the cheapest possible proof that the state really is the game.
+// ---------------------------------------------------------------------------
+
+$('#copy-state').addEventListener('click', async () => {
+  const text = stateToJSON(ui.state);
+  $('#state-json').value = text;
+  try {
+    await navigator.clipboard.writeText(text);
+    $('#debug-note').textContent = 'Copied.';
+  } catch (error) {
+    $('#state-json').select();
+    $('#debug-note').textContent = 'Clipboard refused — the text is selected instead.';
+  }
+});
+
+$('#load-state').addEventListener('click', () => {
+  try {
+    ui.state = stateFromJSON($('#state-json').value);
+    ui.selected = null;
+    $('#results').hidden = true;
+    $('#debug-note').textContent = 'Loaded.';
+    resize();
+    draw();
+    if (isFinished(ui.state)) showResults();
+  } catch (error) {
+    $('#debug-note').textContent = `Not a state: ${error.message}`;
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Service worker. Without the reload below, a pupil who reloads after an
+// update still sees the old version: the new worker takes over only after the
+// page it is replacing has gone.
+// ---------------------------------------------------------------------------
+
+let registration = null;
+
+if ('serviceWorker' in navigator) {
+  const hadController = Boolean(navigator.serviceWorker.controller);
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return; // first install: nothing is stale
+    reloading = true;
+    location.reload();
+  });
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then(result => { registration = result; })
+      .catch(() => { /* offline support is optional; the game still runs */ });
+  });
+}
+
+$('#check-updates').addEventListener('click', async () => {
+  const button = $('#check-updates');
+  if (!registration) {
+    button.textContent = 'Updates need the installed version';
+    return;
+  }
+  button.textContent = 'Checking…';
+  try {
+    await registration.update();
+    button.textContent = registration.installing || registration.waiting
+      ? 'Update found — reloading…'
+      : `Up to date (v${VERSION})`;
+  } catch (error) {
+    button.textContent = 'Could not check — no network?';
+  }
+});
+
+buildPad();
+buildSetup();
+</script>
+</body>
+</html>

@@ -55,11 +55,16 @@ offline after that.
 
 ## Tests
 
-No dependencies, no `package.json`, no build step. Node's built-in test runner:
+No dependencies, no `package.json`, no build step. Node's built-in test runner
+finds `test/*.test.js` by itself:
 
 ```sh
-node --test test/
+node --test
 ```
+
+To name the directory instead, pass it as a pattern — `node --test "test/*.test.js"`.
+Plain `node --test test/` is rejected by Node on Windows, which reads the
+argument as a module rather than a directory.
 
 ## File structure
 
@@ -83,6 +88,16 @@ test/
 
 The game logic lives in modules so the tests can import it directly. CSS,
 UI and rendering stay inline in `index.html`.
+
+The icons are generated rather than drawn by hand, by a script with no
+dependencies — it writes the PNG chunks itself using Node's `zlib`:
+
+```sh
+node tools/make-icons.mjs
+```
+
+The generated files are committed, so this only needs running when the artwork
+changes.
 
 ## Deployment
 
