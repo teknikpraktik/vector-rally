@@ -88,6 +88,51 @@ can be in, takes 30 to 39 moves depending on the track. A beginner runs perhaps
 players in a forty-minute lesson, tight for four on the longest tracks. There
 is a button to end the race early.
 
+## The computer drivers
+
+Two of them, and they are not easy and hard — they are two different ideas
+about how to drive, and the difference is meant to be visible from the back of
+the room.
+
+**Greedy** looks one move ahead and takes whichever of the nine gets it nearest
+the next checkpoint while carrying the most speed. It measures that distance in
+a straight line, so it knows nothing about the shape of the track: it
+accelerates towards a corner it cannot see and arrives with nowhere left to go.
+
+**Planner** runs A* over the states a car can be in — where it is and how fast
+it is going — nine successors a state, one move each, with an admissible
+estimate of `ceil(distance to the gate / 5)` measured the way a car actually
+moves. It plans to the gate *after* the next one, not to the next one: a car
+that only plans as far as the next gate arrives at it flat out and drives off
+immediately afterwards, having met its goal and thought no further. Only the
+first move of the plan is taken, and the rest is worked out again next turn.
+
+Both steer by checkpoints the players cannot see, and the interface says so.
+
+There is a node budget, 50,000 states a move. If the planner runs out it falls
+back to Greedy **and says so on the screen** — a planner that quietly drove like
+the greedy one would just look like a planner that is no good.
+
+One lap on each track, one car alone, measured on an AMD Ryzen 9 5900HX under
+Node 24 — a laptop, not a phone:
+
+| Track | Greedy | Planner | Perfect |
+|---|---|---|---|
+| Monza | 82 moves, 16 off | 43 moves, 0 off | 39 |
+| Spa | 57, 8 | 36, 0 | 34 |
+| Silverstone | 77, 15 | 37, 0 | 34 |
+| Monaco | 59, 11 | 42, 0 | 39 |
+| Suzuka | 48, 7 | 34, 0 | 34 |
+| Interlagos | 55, 11 | 32, 0 | 30 |
+
+The planner's worst single move looked at about 3,000 states — a sixteenth of
+its budget — at roughly 150,000 states a second, so 8 to 18 ms a move. The
+budget has never actually run out on these tracks; the fallback is tested by
+handing the planner a budget of five. Phone numbers are still to be measured.
+
+There is a mode on the track screen that races Greedy against Planner with
+nobody playing, for showing the difference on a projector.
+
 ## Running it locally
 
 The game loads its logic as ES modules, so opening `index.html` straight from
@@ -175,7 +220,8 @@ Built in steps, each one its own commit:
 2. Twelve hand-drawn tracks (on a grid)
 2b. Continuous track geometry, positions on the lattice, six tracks
 2c. Player count and swipeable track selection
-3. Greedy and planning agents, then a Q-learning agent trained live in the page
+3a. Greedy and planning agents
+3b. A Q-learning agent trained live in the page
 4. Landing page and install instructions
 5. Screenshot, measurements, final README
 

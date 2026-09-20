@@ -109,23 +109,33 @@ function gcd(a, b) {
  */
 export function gateCrossings(track, from, to, limit = 1) {
   const found = [];
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
   for (const gate of track.gates) {
-    const gx = gate.b[0] - gate.a[0];
-    const gy = gate.b[1] - gate.a[1];
-    const denominator = dx * gy - dy * gx;
-    if (Math.abs(denominator) <= EPSILON) continue;
-    const t = ((gate.a[0] - from[0]) * gy - (gate.a[1] - from[1]) * gx) / denominator;
-    const u = ((gate.a[0] - from[0]) * dy - (gate.a[1] - from[1]) * dx) / denominator;
-    if (t <= EPSILON || t > limit + EPSILON) continue;
-    if (u < -EPSILON || u > 1 + EPSILON) continue;
-    // Only the way the gate faces counts, which is what stops a car rolling
-    // back and forth over the line collecting laps.
-    if (dx * gate.dir[0] + dy * gate.dir[1] <= 0) continue;
-    found.push({ number: gate.number, t });
+    const t = crossesGate(gate, from, to, limit);
+    if (t !== null) found.push({ number: gate.number, t });
   }
   return found.sort((one, other) => one.t - other.t);
+}
+
+/**
+ * How far along the move it passes this one gate the right way round, or null.
+ * The planner in agents.js asks this of a single gate tens of thousands of
+ * times a turn, which is why it is separate from the loop above.
+ */
+export function crossesGate(gate, from, to, limit = 1) {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const gx = gate.b[0] - gate.a[0];
+  const gy = gate.b[1] - gate.a[1];
+  const denominator = dx * gy - dy * gx;
+  if (Math.abs(denominator) <= EPSILON) return null;
+  const t = ((gate.a[0] - from[0]) * gy - (gate.a[1] - from[1]) * gx) / denominator;
+  const u = ((gate.a[0] - from[0]) * dy - (gate.a[1] - from[1]) * dx) / denominator;
+  if (t <= EPSILON || t > limit + EPSILON) return null;
+  if (u < -EPSILON || u > 1 + EPSILON) return null;
+  // Only the way the gate faces counts, which is what stops a car rolling back
+  // and forth over the line collecting laps.
+  if (dx * gate.dir[0] + dy * gate.dir[1] <= 0) return null;
+  return t;
 }
 
 // ---------------------------------------------------------------------------

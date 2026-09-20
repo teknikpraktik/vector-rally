@@ -123,8 +123,11 @@ legend { font-weight: 650; padding: 0 0 6px; }
 
 .choice-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
-.players { display: grid; gap: 10px; }
-.player-row { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: center; }
+.players { display: grid; gap: 14px; }
+.kinds { grid-column: 1 / -1; display: flex; gap: 6px; }
+.kinds button { flex: 1 1 0; padding: 6px 8px; font-size: 0.86em; box-shadow: none; }
+.kinds button[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
+.player-row { display: grid; grid-template-columns: 34px 1fr; gap: 8px 10px; align-items: center; }
 .swatch { width: 34px; height: 34px; }
 
 .about { color: var(--ink-soft); }
@@ -261,6 +264,7 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
 }
 .hud .spacer { flex: 1 1 auto; }
 .hud .muted { color: var(--ink-soft); }
+.hud .bad { color: var(--danger); }
 .hud b { font-variant-numeric: tabular-nums; }
 
 .board { position: relative; flex: 1 1 auto; min-height: 0; }
@@ -426,6 +430,12 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
         passed every hidden checkpoint in order along the way. You cannot see the
         checkpoints; following the arrows round is enough to collect them.</li>
     </ul>
+    <p><b>The computer drivers</b> are two different ideas rather than two levels.
+      <b>Greedy</b> looks one move ahead and takes whichever gets it nearest the next
+      checkpoint fastest, measuring in a straight line — so it accelerates towards
+      corners it cannot see and falls off them. <b>Planner</b> searches every state a
+      car could be in, several moves deep, and brakes before the corner because the
+      search has already been round it. Both steer by checkpoints you cannot see.</p>
     <p><b>The edge of the track</b> is a curve that pays the squares no attention. It
       is drawn as a thin line exactly where the mathematics puts it, so what you see
       is what the game tests against.</p>
@@ -458,6 +468,7 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
   <div class="dots" id="dots" role="tablist" aria-label="Tracks"></div>
 
   <button class="primary big" id="start">Start race</button>
+  <button class="quiet big" id="watch">Watch Greedy against Planner</button>
   <p class="hint disclaimer">Drawn by hand, not measured. They are after the character
     of a place, not its shape.</p>
 </section>
@@ -467,6 +478,7 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
     <span class="who" id="hud-who"></span>
     <span class="muted" id="hud-progress"></span>
     <span class="spacer"></span>
+    <span class="muted" id="hud-agent"></span>
     <span class="muted" id="hud-track"></span>
     <span class="muted">v<span data-version>…</span></span>
     <button class="quiet" id="to-menu">Menu</button>
@@ -517,6 +529,7 @@ import {
   previewMove, standings, stateFromJSON, stateToJSON, undoMove,
 } from './engine.js';
 import { generateTrack, getTrack, listTracks } from './tracks.js';
+import { AGENT_NAMES, chooseMove, isAgent } from './agents.js';
 
 const VERSION = self.APP_VERSION || 'dev';
 const MIN_CELL = 14;          // the camera never zooms in closer than this
@@ -537,6 +550,7 @@ const ui = {
   setup: {
     players: 2,
     names: ['P1', 'P2', 'P3', 'P4'],
+    kinds: ['human', 'human', 'human', 'human'],
     cards: [],
     showing: 0,
     anywhereSeed: 0,
@@ -550,7 +564,11 @@ const ui = {
   message: null,
   crash: null,
   waiting: false,
+  agentStats: null,
 };
+
+/** How long to leave a computer driver’s move on the screen before the next. */
+const AGENT_PACE = 550;
 
 const canvas = $('#board');
 const ctx = canvas.getContext('2d');
@@ -573,6 +591,13 @@ function buildPlayers() {
     const field = event.target.closest('[data-player]');
     if (field) ui.setup.names[Number(field.dataset.player)] = field.value;
   });
+  $('#player-names').addEventListener('click', event => {
+    const button = event.target.closest('[data-kind]');
+    if (!button) return;
+    const [index, kind] = button.dataset.kind.split(':');
+    ui.setup.kinds[Number(index)] = kind;
+    refreshPlayers();
+  });
   refreshPlayers();
 }
 
@@ -588,7 +613,18 @@ function refreshPlayers() {
       <input type="text" data-player="${index}" maxlength="12"
         aria-label="Name of player ${index + 1}"
         value="${escapeHtml(ui.setup.names[index])}">
+      <div class="kinds" role="group" aria-label="Who drives player ${index + 1}">
+        ${driverButtons(index)}
+      </div>
     </div>`).join('');
+}
+
+/** Human, Greedy or Planner, for one player. */
+function driverButtons(index) {
+  const choices = [['human', 'You'], ['greedy', 'Greedy'], ['planner', 'Planner']];
+  return choices.map(([kind, label]) =>
+    `<button data-kind="${index}:${kind}"
+      aria-pressed="${ui.setup.kinds[index] === kind}">${label}</button>`).join('');
 }
 
 function symbolMarkup(symbol, color) {
@@ -776,10 +812,10 @@ function newSeed() {
   return bits[0] % 2147483647;
 }
 
-function startRace() {
-  const players = Array.from({ length: ui.setup.players }, (unused, index) => ({
+function startRace(cast) {
+  const players = cast || Array.from({ length: ui.setup.players }, (unused, index) => ({
     name: ui.setup.names[index] || `P${index + 1}`,
-    kind: 'human',
+    kind: ui.setup.kinds[index],
   }));
   const chosen = ui.setup.cards[ui.setup.showing] || 'monza';
   // Anywhere is raced on the very track the card showed, so the seed that
@@ -800,9 +836,22 @@ function startRace() {
   ui.waiting = false;
   ui.camera = { scale: 26, centre: [0, 0], mode: 'follow' };
   ui.confirmingEnd = false;
+  ui.agentStats = null;
   showScreen('race');
   resize();
   draw();
+  if (players.some(player => isAgent(player.kind))) {
+    flash('The computer drivers steer by checkpoints you cannot see.');
+  }
+  handOver();
+}
+
+/** Greedy against Planner on the track being shown, with nobody playing. */
+function watchThem() {
+  startRace([
+    { name: 'Greedy', kind: 'greedy' },
+    { name: 'Planner', kind: 'planner' },
+  ]);
 }
 
 function showScreen(name) {
@@ -828,6 +877,15 @@ function select(move) {
 }
 
 function commit() {
+  if (!ui.selected) return;
+  take(ui.selected);
+}
+
+/**
+ * Every move goes through here, whoever chose it, so a computer driver
+ * leaving the track is shown the same way a player leaving it is.
+ */
+function take(move) {
   if (!ui.state || isFinished(ui.state) || ui.waiting) return;
 
   if (trapped()) {
@@ -836,24 +894,22 @@ function commit() {
     afterMove('Boxed in — the car crashes and loses all its speed.');
     return;
   }
-  if (!ui.selected) return;
 
-  const outcome = previewMove(ui.state, ui.selected);
+  const outcome = previewMove(ui.state, move);
   if (outcome.blocking) {
     refuse(outcome.reason);
     return;
   }
   if (outcome.reason !== 'off track') {
-    ui.state = applyMove(ui.state, ui.selected);
+    ui.state = applyMove(ui.state, move);
     afterMove(null);
     return;
   }
 
   // Off the track. The picture of what happened stays on the screen for a
-  // moment before the car is moved back, because on a curved edge nobody
-  // can check by eye where the line left the track.
+  // moment before the car is moved back, because on a curved edge nobody can
+  // check by eye where the line left the track.
   const player = ui.state.players[ui.state.active];
-  const chosen = ui.selected;
   ui.crash = {
     from: [...player.pos],
     target: [...outcome.target],
@@ -861,16 +917,32 @@ function commit() {
     edge: outcome.hit.edge,
   };
   ui.waiting = true;
-  flash('Off the track there. Speed back to zero, and the turn is gone.', true);
+  flash(`${player.name} left the track there. Speed back to zero, and the turn is gone.`, true);
   draw();
   window.setTimeout(() => {
     ui.crash = null;
     ui.waiting = false;
-    ui.state = applyMove(ui.state, chosen);
-    afterMove('Off the track. Speed back to zero, and the turn is gone.');
+    ui.state = applyMove(ui.state, move);
+    afterMove(`${player.name} left the track. Speed back to zero, and the turn is gone.`);
   }, 1600);
 }
 
+/** A computer driver takes its turn, and hands on to whoever is next. */
+function playAgent() {
+  if (!ui.state || isFinished(ui.state) || ui.waiting) return;
+  const player = ui.state.players[ui.state.active];
+  if (!isAgent(player.kind)) return;
+  const { move, stats } = chooseMove(ui.state);
+  ui.agentStats = { ...stats, who: player.name };
+  take(move);
+}
+
+/** If the next car drives itself, give the last move a moment to be seen. */
+function handOver() {
+  if (!ui.state || isFinished(ui.state)) return;
+  if (!isAgent(ui.state.players[ui.state.active].kind)) return;
+  window.setTimeout(playAgent, AGENT_PACE);
+}
 /** A move that cannot happen: say so, and make the button say so too. */
 function refuse(reason) {
   flash(reason === 'car'
@@ -891,6 +963,7 @@ function afterMove(message) {
   ui.message = message ? { text: message, bad: true } : null;
   draw();
   if (isFinished(ui.state)) showResults();
+  else handOver();
 }
 
 function undo() {
@@ -1258,6 +1331,7 @@ function drawHud() {
   ].join(' · ');
 
   $('#hud-track').textContent = board.name;
+  $('#hud-agent').innerHTML = agentLine();
   $('#undo').disabled = ui.state.history.length === 0;
   $('#end-race').textContent = ui.confirmingEnd ? 'Really end it?' : 'End race';
 
@@ -1305,6 +1379,25 @@ function drawPad() {
   }
 }
 
+/**
+ * What the last computer driver did and what it cost. A planner that quietly
+ * gave up and drove like the greedy one would look like a planner that is no
+ * good, so it says when that happens.
+ */
+function agentLine() {
+  const stats = ui.agentStats;
+  if (!stats) return '';
+  const driver = AGENT_NAMES[stats.kind] || stats.kind;
+  const who = stats.who === driver ? driver
+    : `${escapeHtml(stats.who)} · ${driver}`;
+  if (stats.fellBack) {
+    return `<b class="bad">${who}: budget of ${stats.budget.toLocaleString()} states exceeded, fell back to greedy</b>`;
+  }
+  if (stats.kind === 'greedy') {
+    return `${who} · ${stats.expanded} moves weighed`;
+  }
+  return `${who} · ${stats.expanded.toLocaleString()} states searched · ${Math.round(stats.perSecond / 1000)}k/s`;
+}
 /** One message at a time, and the ones the player cannot ignore come first. */
 function updateBanner() {
   const banner = $('#banner');
@@ -1360,8 +1453,9 @@ function escapeHtml(text) {
 // Input
 // ---------------------------------------------------------------------------
 
-$('#start').addEventListener('click', startRace);
+$('#start').addEventListener('click', () => startRace());
 $('#to-tracks').addEventListener('click', () => showScreen('tracks'));
+$('#watch').addEventListener('click', watchThem);
 $('#back-to-players').addEventListener('click', () => showScreen('players'));
 $('#previous-track').addEventListener('click', () => scrollToCard(ui.setup.showing - 1));
 $('#next-track').addEventListener('click', () => scrollToCard(ui.setup.showing + 1));
