@@ -11,6 +11,11 @@
  * player changes each component of the velocity by -1, 0 or +1, and the car
  * travels in a straight line to position plus new velocity.
  *
+ * A car that leaves the track comes to rest just outside it, at a standstill,
+ * where it crossed the edge. It is not put back on: getting back on is another
+ * turn, and from out there the only move it may make is one that returns it to
+ * the track.
+ *
  * The track is an area with a curved edge, so the question "did that move stay
  * on the track" is asked of the whole line, not of its far end. At speed 5 the
  * line is five units long and can cut the corner out of a bend and back in
@@ -76,28 +81,6 @@ export function pointInside(track, point) {
 export function segmentInside(track, from, to) {
   if (!pointInside(track, from) || !pointInside(track, to)) return false;
   return track.hit(from, to) === null;
-}
-
-/**
- * The whole-number points along a move, in order, starting where the car is.
- * These are the only places a car can be put down, which matters when a move
- * ends off the track and the car has to be left at the last good one.
- */
-export function latticePointsAlong(from, velocity) {
-  const steps = gcd(Math.abs(velocity[0]), Math.abs(velocity[1]));
-  const points = [{ point: [from[0], from[1]], t: 0 }];
-  for (let step = 1; step <= steps; step++) {
-    points.push({
-      point: [from[0] + (velocity[0] * step) / steps, from[1] + (velocity[1] * step) / steps],
-      t: step / steps,
-    });
-  }
-  return points;
-}
-
-function gcd(a, b) {
-  while (b !== 0) [a, b] = [b, a % b];
-  return a;
 }
 
 /**
@@ -264,6 +247,17 @@ function preview(state, move) {
     if (onSegment(from, target, other.pos)) return blocked('car', { target });
   }
 
+  // A car that is already off the track is not driving, it is rejoining.
+  // The only thing it may do is get back on: anywhere else is more field.
+  if (!pointInside(track, from)) {
+    if (!pointInside(track, target)) return blocked('rejoin', { target });
+    return {
+      move, velocity, target, landing: [...target],
+      reason: null, blocking: false, crashes: false, hit: null,
+      gates: gateCrossings(track, from, target, 1),
+    };
+  }
+
   const hit = track.hit(from, target);
   const limit = hit === null ? 1 : hit.t;
   const gates = gateCrossings(track, from, target, limit);
@@ -275,24 +269,62 @@ function preview(state, move) {
     };
   }
 
-  // Off the track. The car is left on the last whole-number point it reached
-  // before the edge, backing up past any point another car is standing on. Its
-  // own point always qualifies, so this always finds somewhere.
+  // Off the track. The car does not get put back on it: it comes to rest
+  // just outside, where it left, at a standstill. Getting back on costs
+  // another turn.
   const taken = new Set(state.players
     .filter(other => other.id !== player.id && !other.finished)
     .map(other => `${other.pos[0]},${other.pos[1]}`));
-  let landing = [...from];
-  for (const step of latticePointsAlong(from, velocity)) {
-    if (step.t >= hit.t - EPSILON) break;
-    if (!pointInside(track, step.point)) continue;
-    if (taken.has(`${step.point[0]},${step.point[1]}`)) continue;
-    landing = step.point;
-  }
 
   return {
-    move, velocity, target, landing,
-    reason: 'off track', blocking: false, crashes: true, hit, gates,
+    move,
+    velocity,
+    target,
+    landing: restingPlace(track, hit, taken, from),
+    reason: 'off track',
+    blocking: false,
+    crashes: true,
+    hit,
+    gates,
   };
+}
+
+/**
+ * Where a car ends up once it has left the track: the nearest whole-number
+ * point outside the track to the place it crossed the edge.
+ *
+ * It has to be a point the car can get back from, so only points that still
+ * touch the track count. A car parked three fields into the countryside with
+ * nothing but countryside around it would never race again.
+ */
+function restingPlace(track, hit, taken, fallback) {
+  let best = null;
+  let bestGap = Infinity;
+  for (let radius = 0; radius <= 3 && best === null; radius++) {
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const point = [Math.round(hit.x) + dx, Math.round(hit.y) + dy];
+        if (pointInside(track, point)) continue;
+        if (taken.has(`${point[0]},${point[1]}`)) continue;
+        if (!touchesTrack(track, point)) continue;
+        const gap = (point[0] - hit.x) ** 2 + (point[1] - hit.y) ** 2;
+        if (gap < bestGap) { bestGap = gap; best = point; }
+      }
+    }
+  }
+  return best || [...fallback];
+}
+
+/** Is there anywhere on the track next door to this point? */
+function touchesTrack(track, point) {
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      if (pointInside(track, [point[0] + dx, point[1] + dy])) return true;
+    }
+  }
+  return false;
 }
 
 /** Does this point lie exactly on the line from one end to the other? */
@@ -331,6 +363,9 @@ export function applyMove(state, move) {
     }
     if (outcome.reason === 'car') {
       throw new Error('Another car is standing in the way of that move');
+    }
+    if (outcome.reason === 'rejoin') {
+      throw new Error('That car is off the track and has to drive back onto it');
     }
   }
 

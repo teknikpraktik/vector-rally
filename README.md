@@ -31,10 +31,12 @@ out of the arithmetic instead of being programmed in.
   At speed 5 that line is five units long and can cut the corner out of a bend
   and back in again with both of its ends still on the track. That is leaving
   the track, and it is caught.
-- Go off and the car is put back on the last whole-number point it reached,
-  with its velocity set to zero. That costs you the turn. Because nobody can
-  check a curved edge by eye, the game shows the exact point where the line
-  crossed the edge, and the piece of edge it crossed, before moving the car.
+- Go off and the car does not get put back on the track. It comes to rest just
+  outside it, where it crossed the edge, at a standstill — and from out there
+  the only move it may make is one that puts it back on, so an excursion costs
+  two turns and all the speed. Because nobody can check a curved edge by eye,
+  the game shows the exact point where the line crossed and the piece of edge
+  it crossed before moving the car.
 - Cars are points. Two of them may not stand on the same point, and a move
   whose line passes exactly through another car is impossible. Passing close is
   not — with point-sized cars there is room.
@@ -189,7 +191,10 @@ how many attempts, and potential-based shaping — are on the screen, so the
 failures above can be reproduced in front of a class by turning the discount
 back down to 0.95 with a lap-long goal.
 
-Measured on an AMD Ryzen 9 5900HX under Node 24, 150,000 attempts a track:
+Measured on an AMD Ryzen 9 5900HX under Node 24, 400,000 attempts a track —
+the default went up from 150,000 when a car that goes off started coming to
+rest off the track, which is a harder thing to learn than being put back on the
+racing line was. At 150,000 it got round on 10 of 18 runs; at 400,000, on 14.
 
 | Track | Trained in | Attempts a second | States | Moves an attempt |
 |---|---|---|---|---|

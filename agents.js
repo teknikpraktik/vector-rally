@@ -20,7 +20,7 @@
  */
 
 import {
-  MAX_SPEED, MOVES, crossesGate, latticePointsAlong, legalMoves, mulberry32,
+  MAX_SPEED, MOVES, crossesGate, legalMoves, mulberry32, pointInside,
   previewMove, segmentInside,
 } from './engine.js';
 import { getTrack } from './tracks.js';
@@ -150,7 +150,10 @@ function planner(state, budget) {
       if (Math.abs(vx) > MAX_SPEED || Math.abs(vy) > MAX_SPEED) continue;
       const to = [here.x + vx, here.y + vy];
       const from = [here.x, here.y];
-      if (!segmentInside(track, from, to)) continue;
+      // A car that is off the track may only drive back onto it, which is
+      // the one case where a move crossing the edge is allowed.
+      const rejoining = !pointInside(track, from);
+      if (rejoining ? !pointInside(track, to) : !segmentInside(track, from, to)) continue;
       if (blockers.some(point => onLine(from, to, point))) continue;
 
       // The gates have to be taken in order, so the one after next only counts
@@ -338,7 +341,11 @@ export const LEARNER_DEFAULTS = Object.freeze({
   gamma: 0.95,
   epsilonFrom: 1,
   epsilonTo: 0.05,
-  episodes: 150000,
+  // A car that goes off now comes to rest off the track and has to drive back
+  // on, which is a harder thing to learn than being put back on the racing
+  // line was. Measured: 150,000 attempts got round 10 times out of 18,
+  // 400,000 got round 14.
+  episodes: 400000,
   episodeCap: 1500,
   shaping: false,
 });
@@ -411,15 +418,18 @@ export function createLearner(track, options = {}) {
   const key = stateKeyFor(track);
 
   // Everywhere a car could be put down, for the exploring starts. Without them
-  // a random walker would never reach the line from the grid on a track this
+  // a random walker would never reach a gate from the grid on a track this
   // long, and the curve would be a flat line along the top of the chart.
+  //
+  // Only places on the track: the handful just off it, where a car that has
+  // been off comes to rest, are reached by crashing, and sampling them evenly
+  // with the rest spends the budget on the edges rather than on the racing.
   const places = [];
   for (let y = Math.floor(track.bounds.minY); y <= Math.ceil(track.bounds.maxY); y++) {
     for (let x = Math.floor(track.bounds.minX); x <= Math.ceil(track.bounds.maxX); x++) {
       if (track.contains(x, y)) places.push([x, y]);
     }
   }
-
   // How much of the lap is left, for the optional shaping.
   const remaining = new Map();
   if (settings.shaping) {
@@ -581,8 +591,16 @@ function roll(track, gates, x, y, vx, vy, move) {
   const nvy = vy + move.ay;
   const from = [x, y];
   const to = [x + nvx, y + nvy];
-  const hit = track.hit(from, to);
 
+  // Off the track already: the only thing that happens is getting back on.
+  if (!pointInside(track, from)) {
+    if (!pointInside(track, to)) {
+      return { x, y, vx: 0, vy: 0, crashed: true, home: false, backwards: false };
+    }
+    return { x: to[0], y: to[1], vx: nvx, vy: nvy, crashed: false, home: false, backwards: false };
+  }
+
+  const hit = track.hit(from, to);
   if (hit === null) {
     let home = false;
     let backwards = false;
@@ -596,17 +614,39 @@ function roll(track, gates, x, y, vx, vy, move) {
     return { x: to[0], y: to[1], vx: nvx, vy: nvy, crashed: false, home, backwards };
   }
 
-  let landing = from;
-  for (const step of latticePointsAlong(from, [nvx, nvy])) {
-    if (step.t >= hit.t) break;
-    if (track.contains(step.point[0], step.point[1])) landing = step.point;
-  }
+  // Left the track: it comes to rest just outside, where it crossed.
+  const resting = outsideNear(track, hit);
   return {
-    x: landing[0], y: landing[1], vx: 0, vy: 0,
+    x: resting[0], y: resting[1], vx: 0, vy: 0,
     crashed: true, home: false, backwards: false,
   };
 }
 
+/** The nearest point off the track that still touches it. */
+function outsideNear(track, hit) {
+  for (let radius = 0; radius <= 3; radius++) {
+    let best = null;
+    let bestGap = Infinity;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const point = [Math.round(hit.x) + dx, Math.round(hit.y) + dy];
+        if (pointInside(track, point)) continue;
+        let touches = false;
+        for (let ny = -1; ny <= 1 && !touches; ny++) {
+          for (let nx = -1; nx <= 1 && !touches; nx++) {
+            if ((nx || ny) && pointInside(track, [point[0] + nx, point[1] + ny])) touches = true;
+          }
+        }
+        if (!touches) continue;
+        const gap = (point[0] - hit.x) ** 2 + (point[1] - hit.y) ** 2;
+        if (gap < bestGap) { bestGap = gap; best = point; }
+      }
+    }
+    if (best) return best;
+  }
+  return [Math.round(hit.x), Math.round(hit.y)];
+}
 function bestOf(row, allowed) {
   let best = allowed[0];
   let bestValue = -Infinity;

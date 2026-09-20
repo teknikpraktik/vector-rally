@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   MAX_SPEED, MOVES, applyMove, createInitialState, endRace, gateCrossings, isFinished,
-  latticePointsAlong, legalMoves, mulberry32, pointInside, previewMove, replayHistory,
+  legalMoves, mulberry32, pointInside, previewMove, replayHistory,
   segmentInside, undoMove,
 } from '../engine.js';
 import { defineTrack, listTracks } from '../tracks.js';
@@ -190,27 +190,41 @@ test('7. a checkpoint cannot be jumped, even at full speed', () => {
   assert.ok(crossed, 'at least one move got past the gate');
 });
 
-test('8. driving off the track leaves the car on the last whole point it reached', () => {
+test('8. a car that leaves the track comes to rest off it, at a standstill', () => {
   // The top straight is the strip 5.5 < y < 10.5.
   const state = place(race(WIDE), 0, { pos: [30, 10], vel: [0, -5] });
   const outcome = previewMove(state, { ax: 0, ay: 0 });
   assert.equal(outcome.reason, 'off track');
   assert.equal(outcome.blocking, false, 'you are allowed to get it wrong');
+  assert.ok(outcome.hit, 'and it knows where the line left the track');
 
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [30, 6], 'the last whole point before the edge');
-  assert.deepEqual(after.players[0].vel, [0, 0]);
-  assert.equal(after.players[0].crashes, 1);
+  const car = after.players[0];
+  assert.equal(pointInside(WIDE, car.pos), false,
+    `it ended at ${car.pos}, which is still on the track`);
+  assert.deepEqual(car.vel, [0, 0]);
+  assert.equal(car.crashes, 1);
+  assert.ok(Math.hypot(car.pos[0] - outcome.hit.x, car.pos[1] - outcome.hit.y) < 3,
+    `it came to rest at ${car.pos}, nowhere near where it crossed the edge`);
 });
 
-test('9. with no good point on the way, the car stays where it was', () => {
-  const state = place(race(WIDE), 0, { pos: [30, 6], vel: [0, -1] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [30, 6], 'nowhere to put it but where it was');
-  assert.deepEqual(after.players[0].vel, [0, 0]);
-  assert.equal(after.players[0].crashes, 1);
-});
+test('9. a car that is off the track may only drive back onto it', () => {
+  const off = place(race(WIDE), 0, { pos: [30, 10], vel: [0, -5] });
+  const state = applyMove(off, { ax: 0, ay: 0 });
+  assert.equal(pointInside(WIDE, state.players[0].pos), false);
 
+  const moves = legalMoves(state);
+  assert.ok(moves.length > 0, 'there is a way back');
+  assert.ok(moves.length < 9, 'but not every direction is one');
+  for (const move of moves) {
+    const outcome = previewMove(state, move);
+    assert.equal(pointInside(WIDE, outcome.target), true,
+      `${JSON.stringify(move)} leads to ${outcome.target}, which is not back on the track`);
+  }
+  const back = applyMove(state, moves[0]);
+  assert.equal(pointInside(WIDE, back.players[0].pos), true, 'and it took it');
+  assert.equal(back.players[0].crashes, 1, 'rejoining is not another crash');
+});
 test('10. cars are points, and a move may not go through one', () => {
   let state = race(WIDE, 2);
   state = place(state, 0, { pos: [24, 8], vel: [4, 0] });
@@ -231,12 +245,15 @@ test('10. cars are points, and a move may not go through one', () => {
 test('11. with all nine moves unavailable the car crashes, and can move again next turn', () => {
   // At full speed only four moves are left, and the whole-number points on
   // those four lines can be covered by three cars.
-  const home = [30, 14];
+  const home = [30, 7];
   let state = race(OPEN, 4);
   state = place(state, 0, { pos: home, vel: [MAX_SPEED, MAX_SPEED] });
   state = place(state, 1, { pos: [home[0] + 1, home[1] + 1] });
   state = place(state, 2, { pos: [home[0] + 4, home[1] + 5] });
   state = place(state, 3, { pos: [home[0] + 5, home[1] + 4] });
+  for (const player of state.players) {
+    assert.equal(pointInside(OPEN, player.pos), true, `${player.pos} is off the track`);
+  }
   assert.equal(legalMoves(state).length, 0, 'boxed in at full speed');
 
   let after = applyMove(state, { ax: -1, ay: -1 });
@@ -278,7 +295,8 @@ test('13. replaying the history reproduces the race exactly', () => {
 });
 
 test('14. the speed limit cannot be exceeded', () => {
-  const state = place(race(OPEN), 0, { pos: [30, 20], vel: [MAX_SPEED, 0] });
+  const state = place(race(OPEN), 0, { pos: [30, 14], vel: [MAX_SPEED, 0] });
+  assert.equal(pointInside(OPEN, [30, 14]), true, 'the car is on the track to begin with');
   const moves = legalMoves(state);
   assert.equal(hasMove(moves, 1, 0), false);
   assert.throws(() => applyMove(state, { ax: 1, ay: 0 }), /speed limit/);
@@ -286,16 +304,6 @@ test('14. the speed limit cannot be exceeded', () => {
     const velocity = state.players[0].vel[0] + move.ax;
     if (Math.abs(velocity) > MAX_SPEED) assert.equal(hasMove(moves, move.ax, move.ay), false);
   }
-});
-
-test('the whole-number points along a move are the only places a car can stop', () => {
-  assert.deepEqual(latticePointsAlong([10, 10], [4, 2]).map(step => step.point),
-    [[10, 10], [12, 11], [14, 12]]);
-  assert.deepEqual(latticePointsAlong([10, 10], [3, 0]).map(step => step.point),
-    [[10, 10], [11, 10], [12, 10], [13, 10]]);
-  assert.deepEqual(latticePointsAlong([10, 10], [0, 0]).map(step => step.point), [[10, 10]]);
-  assert.deepEqual(latticePointsAlong([10, 10], [3, 5]).map(step => step.point),
-    [[10, 10], [13, 15]], 'a line that passes no whole point on the way');
 });
 
 test('every car starts on the finish line, at a standstill', () => {
