@@ -15,13 +15,14 @@ const WALLS = defineTrack({
   name: 'Walls',
   blurb: 'A wall across the corridor, with a way around it.',
   finishDir: [1, 0],
+  route: [[4, 1], [14, 1], [14, 5], [4, 5]],
   text: `
 ####################
-#SSSS..............#
-#.........#........#
-#.........#.......F#
-#.........#.......1#
-#..................#
+#F.................#
+#F........#........#
+#F........#........#
+#F........#........#
+#F.......1.........#
 ####################
 `,
 });
@@ -31,27 +32,31 @@ const DIAGONAL = defineTrack({
   name: 'Diagonal',
   blurb: 'Two wall cells that touch only at their corners.',
   finishDir: [1, 0],
+  route: [[3, 1], [7, 1], [7, 4], [3, 4]],
   text: `
 ##########
-#SSSS....#
-#....#..F#
-#...#...1#
-#........#
+#F.......#
+#F...#...#
+#F..#....#
+#F.......#
+#F......1#
 ##########
 `,
 });
 
-// Checkpoint 1 is the column at x=10, the finish line the column at x=14.
+// Checkpoint 1 is the column at x=6, the finish line the column at x=10.
 const LINES = defineTrack({
   id: 'test-lines',
   name: 'Lines',
   blurb: 'A checkpoint and a finish line, each one cell thick.',
   finishDir: [1, 0],
+  route: [[3, 2], [8, 2], [13, 2], [17, 2]],
   text: `
 ####################
-#SSSS.....1...F....#
-#.........1...F....#
-#.........1...F....#
+#.....1...F........#
+#.....1...F........#
+#.....1...F........#
+#.....1...F........#
 ####################
 `,
 });
@@ -61,12 +66,13 @@ const OPEN = defineTrack({
   name: 'Open',
   blurb: 'An empty box for the rules about other cars.',
   finishDir: [1, 0],
+  route: [[4, 1], [12, 1], [12, 4], [4, 4]],
   text: `
 ####################
-#SSSS.............1#
-#..................#
-#..................#
-#.................F#
+#F................1#
+#F.................#
+#F.................#
+#F.................#
 ####################
 `,
 });
@@ -75,7 +81,7 @@ function race(track, players = 1, changes = {}) {
   return {
     ...createInitialState({
       trackId: track.id,
-      laps: 3,
+      laps: 2,
       seed: 1,
       players: Array.from({ length: players }, (unused, index) => ({ name: `P${index + 1}` })),
     }),
@@ -144,31 +150,31 @@ test('3. a diagonal wall cannot be slipped through at the corner', () => {
 });
 
 test('4. a lap counts even when the car jumps over the finish line', () => {
-  const state = place(race(LINES), 0, { pos: [11, 2], vel: [MAX_SPEED, 0], checkpoints: [1] });
+  const state = place(race(LINES), 0, { pos: [7, 2], vel: [MAX_SPEED, 0], checkpoints: [1] });
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [16, 2], 'the finish line is not a wall');
+  assert.deepEqual(after.players[0].pos, [12, 2], 'the finish line is not a wall');
   assert.equal(after.players[0].lap, 1);
   assert.deepEqual(after.players[0].checkpoints, [], 'the collection starts again');
 });
 
 test('5. a checkpoint is collected even when the car jumps over it', () => {
-  const state = place(race(LINES), 0, { pos: [7, 2], vel: [MAX_SPEED, 0] });
+  const state = place(race(LINES), 0, { pos: [3, 2], vel: [MAX_SPEED, 0] });
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [12, 2]);
+  assert.deepEqual(after.players[0].pos, [8, 2]);
   assert.deepEqual(after.players[0].checkpoints, [1]);
   assert.equal(after.players[0].lap, 0, 'the finish line was not reached');
 });
 
 test('6. crossing the finish line the wrong way counts for nothing', () => {
-  const state = place(race(LINES), 0, { pos: [17, 2], vel: [-MAX_SPEED, 0], checkpoints: [1] });
+  const state = place(race(LINES), 0, { pos: [13, 2], vel: [-MAX_SPEED, 0], checkpoints: [1] });
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [12, 2], 'it drove back over the line');
+  assert.deepEqual(after.players[0].pos, [8, 2], 'it drove back over the line');
   assert.equal(after.players[0].lap, 0);
   assert.deepEqual(after.players[0].checkpoints, [1], 'and kept what it had');
 });
 
 test('7. crossing the finish line without every checkpoint counts for nothing', () => {
-  const state = place(race(LINES), 0, { pos: [11, 2], vel: [MAX_SPEED, 0], checkpoints: [] });
+  const state = place(race(LINES), 0, { pos: [7, 2], vel: [MAX_SPEED, 0], checkpoints: [] });
   const after = applyMove(state, { ax: 0, ay: 0 });
   assert.equal(after.players[0].lap, 0);
 });
@@ -194,24 +200,24 @@ test('9. driving off the track costs the turn and all the speed', () => {
 
 test('10. a car that crashes onto a taken cell backs up to the nearest free one', () => {
   let state = race(OPEN, 3);
-  state = place(state, 0, { pos: [1, 1], vel: [4, 0] });
-  state = place(state, 1, { pos: [3, 1] });
-  state = place(state, 2, { pos: [4, 1] });
+  state = place(state, 0, { pos: [2, 1], vel: [4, 0] });
+  state = place(state, 1, { pos: [4, 1] });
+  state = place(state, 2, { pos: [5, 1] });
 
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [2, 1],
-    'it stops in front of the car at 3,1 rather than on it');
+  assert.deepEqual(after.players[0].pos, [3, 1],
+    'it stops in front of the car at 4,1 rather than on it');
   assert.deepEqual(after.players[0].vel, [0, 0]);
   assert.equal(after.players[0].crashes, 1);
 
   // With both cells in front taken there is nowhere to back up to, and the
   // car simply stays where it is.
   let boxed = race(OPEN, 3);
-  boxed = place(boxed, 0, { pos: [1, 1], vel: [4, 0] });
-  boxed = place(boxed, 1, { pos: [2, 1] });
-  boxed = place(boxed, 2, { pos: [3, 1] });
+  boxed = place(boxed, 0, { pos: [2, 1], vel: [4, 0] });
+  boxed = place(boxed, 1, { pos: [3, 1] });
+  boxed = place(boxed, 2, { pos: [4, 1] });
   const stuck = applyMove(boxed, { ax: 0, ay: 0 });
-  assert.deepEqual(stuck.players[0].pos, [1, 1]);
+  assert.deepEqual(stuck.players[0].pos, [2, 1]);
   assert.deepEqual(stuck.players[0].vel, [0, 0]);
 });
 

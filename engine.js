@@ -92,11 +92,12 @@ export function pathCells(from, to) {
 }
 
 /**
- * A fresh race. The seed has to be supplied by the caller: the engine never
+ * A fresh race. Every car starts on the finish line, and a race is one lap.
+ * The seed has to be supplied by the caller: the engine never
  * invents randomness of its own, because a race must be reproducible from its
  * state alone.
  */
-export function createInitialState({ trackId, players, laps = 3, seed, appVersion } = {}) {
+export function createInitialState({ trackId, players, laps = 1, seed, appVersion } = {}) {
   const track = getTrack(trackId);
   if (!Array.isArray(players) || players.length < 1 || players.length > MAX_PLAYERS) {
     throw new Error(`A race needs 1 to ${MAX_PLAYERS} players`);

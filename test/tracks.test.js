@@ -72,17 +72,33 @@ test('every track parses', () => {
   }
 });
 
-test('every track has a starting grid of at least four cells, none of them a wall', () => {
+test('every car starts on the finish line', () => {
   for (const track of listTracks()) {
-    assert.ok(track.starts.length >= 4, `${track.id} has ${track.starts.length} starting cells`);
+    assert.ok(track.starts.length >= 4, `${track.id} has room for ${track.starts.length} cars`);
+    assert.deepEqual(track.starts, track.finishCells,
+      `${track.id}: the starting places are the finish line itself`);
     const seen = new Set();
     for (const [x, y] of track.starts) {
-      assert.equal(track.isWall(x, y), false, `${track.id}: start ${x},${y} is a wall`);
       assert.equal(track.isDrivable(x, y), true, `${track.id}: start ${x},${y} is off the track`);
-      assert.equal(track.isFinish(x, y), false, `${track.id}: start ${x},${y} is on the finish line`);
+      assert.equal(track.isWall(x, y), false, `${track.id}: start ${x},${y} is a wall`);
       assert.equal(track.checkpointAt(x, y), 0, `${track.id}: start ${x},${y} is on a checkpoint`);
-      assert.equal(seen.has(String([x, y])), false, `${track.id}: two cars share start ${x},${y}`);
+      assert.equal(seen.has(String([x, y])), false, `${track.id}: two cars share ${x},${y}`);
       seen.add(String([x, y]));
+    }
+  }
+});
+
+test('every track has a route that shows which way round to go', () => {
+  for (const track of listTracks()) {
+    assert.ok(track.route.length >= 8, `${track.id} has only ${track.route.length} route cells`);
+    const step = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
+    for (let index = 0; index < track.route.length; index++) {
+      const here = track.route[index];
+      const next = track.route[(index + 1) % track.route.length];
+      assert.equal(track.isDrivable(here[0], here[1]), true,
+        `${track.id}: route cell ${here} is off the track`);
+      assert.ok(step(here, next) <= 8,
+        `${track.id}: route jumps from ${here} to ${next}`);
     }
   }
 });
@@ -119,9 +135,10 @@ test('every track surface is in one piece', () => {
 test('the parser refuses a broken track', () => {
   const good = `
 ##########
-#SSSS...1#
-#........#
-#.......F#
+#F.......#
+#F......1#
+#F.......#
+#F.......#
 ##########
 `;
   let uniqueId = 0;
@@ -130,6 +147,7 @@ test('the parser refuses a broken track', () => {
     name: 'Broken',
     blurb: 'Broken',
     finishDir: [1, 0],
+    route: [[3, 1], [7, 1], [7, 3], [3, 3]],
     text: good,
     ...changes,
   });
@@ -138,21 +156,25 @@ test('the parser refuses a broken track', () => {
 
   assert.throws(() => parseTrack(source({ text: good.replace('.', 'x') })),
     /unknown character/);
-  assert.throws(() => parseTrack(source({ text: good.replace('SSSS', 'S..S') })),
-    /at least 4 starting cells/);
-  assert.throws(() => parseTrack(source({ text: good.replace('F', '.') })),
-    /no finish line/);
+  assert.throws(() => parseTrack(source({ text: good.replace(/F/g, '.') })),
+    /at least 4 cells/);
+  assert.throws(() => parseTrack(source({ route: [[1, 1]] })), /at least 4 cells/);
+  assert.throws(() => parseTrack(source({ route: [[1, 1], [2, 1], [3, 1], [9, 9]] })),
+    /not on the track/);
   assert.throws(() => parseTrack(source({ text: good.replace('1', '2') })),
     /numbered 1..k/);
   assert.throws(() => parseTrack(source({ finishDir: [0, 0] })), /finishDir/);
   assert.throws(() => parseTrack(source({ finishDir: [2, 0] })), /finishDir/);
   assert.throws(() => parseTrack(source({ name: '' })), /non-empty string/);
   assert.throws(() => parseTrack(source({
+    route: [[3, 1], [7, 1], [7, 2], [3, 2]],
     text: `
 ##########
-#SSSS...1#
+#F......1#
+#F.......#
 ##########
-#.......F#
+#F.......#
+#F.......#
 ##########
 `,
   })), /not connected/);

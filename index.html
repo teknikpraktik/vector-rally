@@ -121,7 +121,7 @@ legend { font-weight: 650; padding: 0 0 6px; }
 
 .hint { color: var(--ink-soft); font-size: 0.86em; }
 
-.track-list { display: grid; gap: 10px; }
+.track-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
 .track {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -241,10 +241,6 @@ kbd {
 .pad .vel { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
 .pad button[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
 .pad button[aria-pressed="true"] .vel { color: var(--paper-shade); }
-.pad button.warn { border-color: var(--danger); color: var(--danger); }
-.pad button.warn .vel { color: var(--danger); }
-.pad button[aria-pressed="true"].warn { background: var(--danger); color: var(--paper-bright); }
-.pad button[aria-pressed="true"].warn .vel { color: var(--paper-bright); }
 .pad button.dead {
   opacity: 0.4;
   border-style: dashed;
@@ -330,6 +326,11 @@ kbd {
   <div class="panel">
     <fieldset>
       <legend>Track</legend>
+      <p class="hint">Twelve tracks named after places that race cars have been driven
+        round. They are drawn by hand on a grid about eighty cells wide, which is
+        nowhere near enough to reproduce a real circuit — a hairpin comes out as a
+        single cell. What they are after is the character of the place: Monza fast and
+        barely interrupted, Monaco all corners. Treat them as sketches, not as maps.</p>
       <div class="track-list" id="track-list"></div>
     </fieldset>
 
@@ -339,34 +340,37 @@ kbd {
       <div class="players" id="players"></div>
     </fieldset>
 
-    <fieldset>
-      <legend>Laps</legend>
-      <div class="choice-row" id="laps" role="group" aria-label="Number of laps"></div>
-    </fieldset>
-
     <button class="primary" id="start" style="width: 100%">Start race</button>
+    <p class="hint" style="margin: 10px 0 0">One lap, everybody on the line together.</p>
   </div>
 
   <details class="about panel">
     <summary>How it works</summary>
     <ul>
       <li>Your car has a position and a velocity. Each turn you change the velocity
-        by −1, 0 or +1 in each direction — nine choices — and the car moves by the
-        new velocity.</li>
+        by −1, 0 or +1 in each direction — nine choices — and the car then moves by
+        the whole new velocity.</li>
       <li>Neither part of the velocity may go outside −5…5.</li>
+      <li><b>Work out where that puts you.</b> The game will not show you: adding the
+        velocity to the position is the part worth practising. The pad tells you what
+        the velocity becomes, and nothing else.</li>
       <li>Everything the car passes over counts: walls, other cars, checkpoints and
         the finish line. At speed 5 you cannot jump over any of them.</li>
       <li>Leave the track and the car is put back on the last cell it reached, with
-        its speed reset to zero. That costs you the turn.</li>
-      <li>A lap counts when you cross the finish line the right way round with every
-        checkpoint collected in order.</li>
+        its speed reset to zero. That costs you the turn — so count carefully.</li>
+      <li>A move that is genuinely impossible — another car in the way, or over the
+        speed limit — is crossed out on the pad and cannot be chosen.</li>
+      <li>One lap. It counts when you cross the line the way the arrows point, with
+        every checkpoint collected in order.</li>
     </ul>
+    <p><b>The edge of the track</b> is drawn as a smooth line, but the game is played
+      on the grid underneath it. A cell is on the track when its corner falls inside
+      the line.</p>
     <p><b>On a keyboard:</b> <kbd>1</kbd>–<kbd>9</kbd> (or the numpad) pick one of the
       nine moves, laid out the way the numpad is. <kbd>Space</kbd> confirms,
       <kbd>U</kbd> undoes, <kbd>O</kbd> zooms out to the whole track.</p>
-    <p><b>On a touch screen:</b> hold a button on the pad to see where the move goes,
-      and let go to take it. Sliding your finger off the button cancels. You can also
-      touch one of the nine marked cells on the track itself.</p>
+    <p><b>On a touch screen:</b> press a button on the pad and let go to take that
+      move. Sliding your finger off the button before letting go cancels it.</p>
     <p><b>Install it:</b> on Android, Chrome's ⋮ menu → “Add to Home screen”. On iOS,
       the share button in Safari's toolbar → scroll down → “Add to Home Screen”.
       Load the game once with a network connection and it works offline afterwards.</p>
@@ -430,10 +434,10 @@ kbd {
 <script type="module">
 import {
   MAX_SPEED, MOVES, PLAYER_COLORS, PLAYER_SYMBOLS,
-  applyMove, createInitialState, endRace, isFinished, legalMoves, previewMove,
-  standings, stateFromJSON, stateToJSON, undoMove,
+  applyMove, createInitialState, endRace, isFinished, legalMoves, mulberry32,
+  previewMove, standings, stateFromJSON, stateToJSON, undoMove,
 } from './engine.js';
-import { getTrack, listTracks } from './tracks.js';
+import { getTrack, listTracks, trackIds } from './tracks.js';
 
 const VERSION = self.APP_VERSION || 'dev';
 const MIN_CELL = 14;          // the camera never zooms in closer than this
@@ -451,7 +455,7 @@ const ui = {
   state: null,
   selected: null,        // the move being previewed, { ax, ay }
   lastKey: null,
-  setup: { trackId: listTracks()[0].id, players: 2, laps: 3, names: ['P1', 'P2', 'P3', 'P4'] },
+  setup: { trackId: 'random', players: 2, names: ['P1', 'P2', 'P3', 'P4'] },
   camera: { scale: 26, centre: [0, 0], mode: 'follow' },
   pointers: new Map(),
   pinch: null,
@@ -470,8 +474,12 @@ const view = { width: 0, height: 0 };
 // ---------------------------------------------------------------------------
 
 function buildSetup() {
-  const tracks = listTracks();
-  $('#track-list').innerHTML = tracks.map(track => `
+  const choices = [
+    { id: 'random', name: 'Anywhere', blurb: 'Let the draw decide. The track is picked '
+      + 'from the seed of the race, so the same seed always picks the same one.' },
+    ...listTracks(),
+  ];
+  $('#track-list').innerHTML = choices.map(track => `
     <label class="track">
       <input type="radio" name="track" value="${track.id}"
         ${track.id === ui.setup.trackId ? 'checked' : ''}>
@@ -494,16 +502,6 @@ function buildSetup() {
     refreshSetup();
   });
 
-  $('#laps').innerHTML = Array.from({ length: 10 }, (unused, index) => index + 1).map(laps =>
-    `<button class="choice quiet" data-laps="${laps}"
-      aria-pressed="${laps === ui.setup.laps}">${laps}</button>`).join('');
-  $('#laps').addEventListener('click', event => {
-    const button = event.target.closest('[data-laps]');
-    if (!button) return;
-    ui.setup.laps = Number(button.dataset.laps);
-    refreshSetup();
-  });
-
   $('#players').addEventListener('input', event => {
     const field = event.target.closest('[data-player]');
     if (field) ui.setup.names[Number(field.dataset.player)] = field.value;
@@ -515,9 +513,6 @@ function buildSetup() {
 function refreshSetup() {
   for (const button of document.querySelectorAll('[data-count]')) {
     button.setAttribute('aria-pressed', String(Number(button.dataset.count) === ui.setup.players));
-  }
-  for (const button of document.querySelectorAll('[data-laps]')) {
-    button.setAttribute('aria-pressed', String(Number(button.dataset.laps) === ui.setup.laps));
   }
   $('#players').innerHTML = Array.from({ length: ui.setup.players }, (unused, index) => `
     <div class="player-row">
@@ -554,11 +549,16 @@ function startRace() {
     name: ui.setup.names[index] || `P${index + 1}`,
     kind: 'human',
   }));
+  const seed = newSeed();
+  const all = trackIds();
+  const trackId = ui.setup.trackId === 'random'
+    ? all[Math.floor(mulberry32(seed)() * all.length)]
+    : ui.setup.trackId;
   ui.state = createInitialState({
-    trackId: ui.setup.trackId,
+    trackId,
     players,
-    laps: ui.setup.laps,
-    seed: newSeed(),
+    laps: 1,
+    seed,
     appVersion: VERSION,
   });
   ui.selected = null;
@@ -725,28 +725,32 @@ function draw() {
     Math.min(board.height - 1, Math.ceil((view.height - oy) / size) + 1),
   ];
 
-  drawPaper(size, ox, oy);
   drawSurface(board, size, from, to);
+  drawPaper(size, ox, oy);
   drawMarkings(board, size, from, to);
-  drawEdges(board, size, from, to);
+  drawOutline(board, size);
+  drawDirection(board, size);
   for (const player of ui.state.players) drawTrace(player, size);
-  if (!isFinished(ui.state)) drawChoices(size);
   for (const player of ui.state.players) drawCar(player, size);
   ctx.restore();
 
   drawHud();
 }
 
+/**
+ * The squared paper, drawn across the whole sheet — including the track, so
+ * the cells you are counting in are the cells you can see.
+ */
 function drawPaper(size, ox, oy) {
-  const step = Math.max(size, 12);
+  if (size < 7) return;
   ctx.lineWidth = 1;
-  ctx.strokeStyle = '#cdd7e0';
+  ctx.strokeStyle = '#c3d0db';
   ctx.beginPath();
-  for (let x = ox % step; x < view.width; x += step) {
+  for (let x = ox % size; x < view.width; x += size) {
     ctx.moveTo(Math.round(x) + 0.5, 0);
     ctx.lineTo(Math.round(x) + 0.5, view.height);
   }
-  for (let y = oy % step; y < view.height; y += step) {
+  for (let y = oy % size; y < view.height; y += size) {
     ctx.moveTo(0, Math.round(y) + 0.5);
     ctx.lineTo(view.width, Math.round(y) + 0.5);
   }
@@ -808,28 +812,121 @@ function drawMarkings(board, size, from, to) {
   }
 }
 
-/** Where the track stops, drawn as a wobbly pencil line rather than a border. */
-function drawEdges(board, size, from, to) {
-  ctx.strokeStyle = '#3b3b40';
-  ctx.lineWidth = Math.max(1.5, size * 0.09);
-  ctx.lineCap = 'round';
-  const nudge = Math.min(2, size * 0.08);
-  ctx.beginPath();
-  for (let y = from[1]; y <= to[1]; y++) {
-    for (let x = from[0]; x <= to[0]; x++) {
+const outlines = new Map();
+
+/**
+ * The edge of the track as one continuous hand-drawn line rather than a
+ * staircase of right angles.
+ *
+ * The corners of the cells are joined into closed loops, nudged about a little
+ * so the line looks drawn, and then rounded off — each corner is replaced by
+ * the two points a quarter of the way along its neighbouring edges, three times
+ * over, which turns the steps into a curve. The curve is what you see; the
+ * grid underneath is still what counts, and a cell is on the track when its
+ * corner is inside the line.
+ */
+function outlineOf(board) {
+  if (outlines.has(board.id)) return outlines.get(board.id);
+
+  // Every edge of a cell with nothing drivable on the other side of it.
+  const links = new Map();
+  const point = (x, y) => `${x},${y}`;
+  const join = (a, b) => {
+    for (const [from, to] of [[a, b], [b, a]]) {
+      const key = point(...from);
+      if (!links.has(key)) links.set(key, []);
+      links.get(key).push(to);
+    }
+  };
+  for (let y = 0; y < board.height; y++) {
+    for (let x = 0; x < board.width; x++) {
       if (!board.isDrivable(x, y)) continue;
+      if (!board.isDrivable(x, y - 1)) join([x, y], [x + 1, y]);
+      if (!board.isDrivable(x, y + 1)) join([x, y + 1], [x + 1, y + 1]);
+      if (!board.isDrivable(x - 1, y)) join([x, y], [x, y + 1]);
+      if (!board.isDrivable(x + 1, y)) join([x + 1, y], [x + 1, y + 1]);
+    }
+  }
+
+  const loops = [];
+  const used = new Set();
+  const edgeKey = (a, b) => (point(...a) < point(...b)
+    ? `${point(...a)}-${point(...b)}` : `${point(...b)}-${point(...a)}`);
+
+  for (const [start] of links) {
+    let at = start.split(',').map(Number);
+    let loop = [];
+    for (;;) {
+      const options = (links.get(point(...at)) || []).filter(to => !used.has(edgeKey(at, to)));
+      if (options.length === 0) break;
+      const next = options[0];
+      used.add(edgeKey(at, next));
+      loop.push(at);
+      at = next;
+    }
+    if (loop.length > 3) loops.push(loop);
+  }
+
+  const drawn = loops.map(loop => {
+    const wobbled = loop.map(([x, y], index) => [
+      x + wobble(x, y, index % 7) * 0.13,
+      y + wobble(y, x, (index % 7) + 11) * 0.13,
+    ]);
+    return round(round(round(wobbled)));
+  });
+  outlines.set(board.id, drawn);
+  return drawn;
+}
+
+/** Chaikin's corner cutting: each corner becomes two points, steps become curves. */
+function round(points) {
+  const smoothed = [];
+  for (let index = 0; index < points.length; index++) {
+    const a = points[index];
+    const b = points[(index + 1) % points.length];
+    smoothed.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+    smoothed.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+  }
+  return smoothed;
+}
+
+function drawOutline(board, size) {
+  ctx.strokeStyle = '#3b3b40';
+  ctx.lineWidth = Math.max(1.4, size * 0.085);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const loop of outlineOf(board)) {
+    loop.forEach(([x, y], index) => {
       const [sx, sy] = toScreen(x, y);
-      const edges = [
-        [board.isDrivable(x, y - 1), sx, sy, sx + size, sy, 1],
-        [board.isDrivable(x, y + 1), sx, sy + size, sx + size, sy + size, 2],
-        [board.isDrivable(x - 1, y), sx, sy, sx, sy + size, 3],
-        [board.isDrivable(x + 1, y), sx + size, sy, sx + size, sy + size, 4],
-      ];
-      for (const [open, x0, y0, x1, y1, salt] of edges) {
-        if (open) continue;
-        ctx.moveTo(x0 + wobble(x, y, salt) * nudge, y0 + wobble(x, y, salt + 9) * nudge);
-        ctx.lineTo(x1 + wobble(x, y, salt + 17) * nudge, y1 + wobble(x, y, salt + 23) * nudge);
-      }
+      if (index === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    });
+    ctx.closePath();
+  }
+  ctx.stroke();
+}
+
+/** Arrows along the middle of the track, so which way round is never a guess. */
+function drawDirection(board, size) {
+  if (size < 9 || board.route.length < 2) return;
+  const wing = Math.max(3, size * 0.42);
+  ctx.strokeStyle = 'rgba(59, 59, 64, 0.35)';
+  ctx.lineWidth = Math.max(1.2, size * 0.09);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (let index = 0; index < board.route.length; index++) {
+    const here = board.route[index];
+    const next = board.route[(index + 1) % board.route.length];
+    const dx = next[0] - here[0];
+    const dy = next[1] - here[1];
+    const length = Math.hypot(dx, dy) || 1;
+    const [sx, sy] = toScreen(here[0] + 0.5 + dx / length * 0.5, here[1] + 0.5 + dy / length * 0.5);
+    const ux = dx / length;
+    const uy = dy / length;
+    for (const side of [-1, 1]) {
+      ctx.moveTo(sx - (ux * 0.7 - uy * side * 0.7) * wing, sy - (uy * 0.7 + ux * side * 0.7) * wing);
+      ctx.lineTo(sx, sy);
     }
   }
   ctx.stroke();
@@ -855,77 +952,6 @@ function drawTrace(player, size) {
     ctx.beginPath();
     ctx.arc(sx, sy, Math.max(1.2, size * 0.09), 0, Math.PI * 2);
     ctx.fill();
-  }
-}
-
-/** The nine moves, always shown on the track, and the one being previewed. */
-function drawChoices(size) {
-  const player = ui.state.players[ui.state.active];
-  const radius = Math.max(3, size * 0.26);
-
-  for (const move of MOVES) {
-    const outcome = previewMove(ui.state, move);
-    const target = outcome.target
-      || [player.pos[0] + player.vel[0] + move.ax, player.pos[1] + player.vel[1] + move.ay];
-    const [sx, sy] = toScreen(target[0] + 0.5, target[1] + 0.5);
-    const chosen = ui.selected && ui.selected.ax === move.ax && ui.selected.ay === move.ay;
-
-    ctx.lineWidth = chosen ? Math.max(2, size * 0.12) : Math.max(1.2, size * 0.07);
-    ctx.setLineDash(outcome.blocking ? [3, 3] : []);
-    ctx.strokeStyle = outcome.blocking ? '#8b8f93' : outcome.reason ? '#9d2f26' : '#3b3b40';
-    ctx.beginPath();
-    ctx.arc(sx, sy, radius, 0, Math.PI * 2);
-    ctx.stroke();
-    if (outcome.blocking) {
-      const arm = radius * 0.72;
-      ctx.beginPath();
-      ctx.moveTo(sx - arm, sy - arm);
-      ctx.lineTo(sx + arm, sy + arm);
-      ctx.moveTo(sx + arm, sy - arm);
-      ctx.lineTo(sx - arm, sy + arm);
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-  }
-
-  if (!ui.selected) return;
-  const outcome = previewMove(ui.state, ui.selected);
-  const bad = outcome.blocking || outcome.reason !== null;
-  const colour = bad ? '#9d2f26' : '#26262a';
-
-  // The cells the car would actually pass through, and the line it would draw.
-  ctx.fillStyle = bad ? 'rgba(157, 47, 38, 0.16)' : 'rgba(47, 111, 143, 0.18)';
-  for (const [x, y] of outcome.cells) {
-    const [sx, sy] = toScreen(x, y);
-    ctx.fillRect(sx, sy, size, size);
-  }
-
-  const [fromX, fromY] = toScreen(player.pos[0] + 0.5, player.pos[1] + 0.5);
-  const landing = outcome.target || outcome.landing;
-  const [toX, toY] = toScreen(landing[0] + 0.5, landing[1] + 0.5);
-  ctx.strokeStyle = colour;
-  ctx.lineWidth = Math.max(2, size * 0.12);
-  ctx.setLineDash(bad ? [6, 4] : []);
-  ctx.beginPath();
-  ctx.moveTo(fromX, fromY);
-  ctx.lineTo(toX, toY);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  if (outcome.reason) {
-    ctx.font = `600 ${Math.max(11, Math.round(size * 0.5))}px system-ui, sans-serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'bottom';
-    const label = outcome.reason;
-    const width = ctx.measureText(label).width + 10;
-    const height = Math.max(14, size * 0.6);
-    ctx.fillStyle = 'rgba(251, 249, 243, 0.92)';
-    ctx.fillRect(toX - width / 2, toY - height - 8, width, height);
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(toX - width / 2, toY - height - 8, width, height);
-    ctx.fillStyle = colour;
-    ctx.fillText(label, toX, toY - 10);
   }
 }
 
@@ -1002,8 +1028,8 @@ function drawHud() {
         </svg>${escapeHtml(player.name)}</span>`;
 
   $('#hud-progress').innerHTML = done ? '' : [
+    `at <b>(${player.pos[0]}, ${player.pos[1]})</b>`,
     `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`,
-    `lap <b>${Math.min(player.lap + 1, ui.state.laps)}/${ui.state.laps}</b>`,
     `checkpoints <b>${player.checkpoints.length}/${board.checkpointCount}</b>`,
     `crashes <b>${player.crashes}</b>`,
     `turn <b>${ui.state.turn + 1}</b>`,
@@ -1047,13 +1073,10 @@ function drawPad() {
     const [vx, vy] = outcome.velocity;
     const chosen = ui.selected && ui.selected.ax === move.ax && ui.selected.ay === move.ay;
     button.disabled = false;
-    button.className = [
-      outcome.blocking ? 'dead' : '',
-      outcome.reason && !outcome.blocking ? 'warn' : '',
-    ].join(' ').trim();
+    button.className = outcome.blocking ? 'dead' : '';
     button.setAttribute('aria-pressed', String(Boolean(chosen)));
     button.setAttribute('aria-label',
-      `speed ${vx}, ${vy}${outcome.reason ? `, ${outcome.reason}` : ''}`);
+      `speed ${vx}, ${vy}${outcome.blocking ? `, blocked by ${outcome.reason}` : ''}`);
     label.textContent = `${vx}, ${vy}`;
   }
 }
@@ -1097,8 +1120,8 @@ function showResults() {
   $('#results-list').innerHTML = list.map(({ player, of }) => `
     <li><b>${escapeHtml(player.name)}</b> —
       ${player.finished
-        ? `finished on turn ${player.finishTurn + 1}`
-        : `lap ${player.lap + 1}, ${player.checkpoints.length}/${of} checkpoints`},
+        ? `home on turn ${player.finishTurn + 1}`
+        : `${player.checkpoints.length}/${of} checkpoints`},
       ${player.crashes} crash${player.crashes === 1 ? '' : 'es'}</li>`).join('');
   $('#results').hidden = false;
 }
@@ -1171,13 +1194,7 @@ canvas.addEventListener('pointerdown', event => {
     ui.pinch = { distance: Math.hypot(a[0] - b[0], a[1] - b[1]), scale: cellSize() };
     return;
   }
-  const move = moveAt(event);
-  if (move) {
-    select(move);
-    ui.dragging = false;
-  } else {
-    ui.dragging = true;
-  }
+  ui.dragging = true;
 });
 
 canvas.addEventListener('pointermove', event => {
@@ -1202,23 +1219,13 @@ canvas.addEventListener('pointermove', event => {
       ui.camera.centre[1] - (event.clientY - previous[1]) / size,
     ];
     draw();
-    return;
-  }
-  if (ui.selected) {
-    const move = moveAt(event);
-    if (move) select(move);
   }
 });
 
 function releasePointer(event) {
-  const wasDragging = ui.dragging;
   ui.pointers.delete(event.pointerId);
   if (ui.pointers.size < 2) ui.pinch = null;
-  if (ui.pointers.size > 0) return;
-  ui.dragging = false;
-  if (wasDragging || !ui.selected) return;
-  const move = moveAt(event);
-  if (move && ui.selected.ax === move.ax && ui.selected.ay === move.ay) commit();
+  if (ui.pointers.size === 0) ui.dragging = false;
 }
 
 canvas.addEventListener('pointerup', releasePointer);
@@ -1235,20 +1242,6 @@ canvas.addEventListener('wheel', event => {
     cellSize() * (event.deltaY < 0 ? 1.1 : 0.9)));
   draw();
 }, { passive: false });
-
-/** Which of the nine moves, if any, the pointer is over on the track. */
-function moveAt(event) {
-  if (!ui.state || isFinished(ui.state)) return null;
-  const rect = canvas.getBoundingClientRect();
-  const [cellX, cellY] = toCell(event.clientX - rect.left, event.clientY - rect.top);
-  const player = ui.state.players[ui.state.active];
-  for (const move of MOVES) {
-    const x = player.pos[0] + player.vel[0] + move.ax;
-    const y = player.pos[1] + player.vel[1] + move.ay;
-    if (x === cellX && y === cellY) return move;
-  }
-  return null;
-}
 
 const KEYS = {
   Numpad7: 0, Numpad8: 1, Numpad9: 2, Numpad4: 3, Numpad5: 4,

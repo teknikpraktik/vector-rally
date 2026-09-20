@@ -13,21 +13,44 @@ out of the physics instead of being programmed in.
 - A car has a position `(x, y)` and a velocity `(vx, vy)`, both in grid cells.
 - Each turn you change `vx` and `vy` by −1, 0 or +1 each: nine possible moves.
   The new position is the old position plus the new velocity.
+- **The game does not show you where that lands.** Working it out is the point,
+  so the nine cells are not marked and there is no preview. The pad tells you
+  what the velocity becomes; the addition is yours.
 - Speed is capped at −5 ≤ `vx`, `vy` ≤ 5.
 - Everything along the path between the old and the new position counts: walls,
   other cars, checkpoints and the finish line. At speed 5 you cannot jump over a
   one-cell wall, and you cannot jump over the finish line either.
 - Leave the track and the car is put back on the last valid cell of its path
-  with its velocity reset to zero. The turn ends there.
+  with its velocity reset to zero. The turn ends there. Miscounting costs you.
 - Two cars may never share a cell, and a move that crosses an occupied cell is
-  illegal. If all nine moves are illegal the car crashes: velocity resets, the
-  car stays put, play moves on.
-- A lap counts when the car crosses the finish line in the right direction with
-  every hidden checkpoint collected in order. Crossing it backwards, or with
-  checkpoints missing, does nothing.
+  impossible — it is crossed out on the pad and cannot be chosen. If all nine
+  are impossible the car crashes: velocity resets, the car stays put, play
+  moves on.
+- The lap counts when the car crosses the finish line the way the arrows on the
+  track point, with every checkpoint collected in order. Crossing backwards, or
+  with checkpoints missing, does nothing.
 
-Race length is 1–10 laps, 3 by default. 1–4 players take turns on the same
-device.
+One lap. Every car starts on the finish line, side by side. 1–4 players take
+turns on the same device.
+
+The edge of the track is drawn as one continuous curve rather than a staircase
+of right angles, but the game is played on the grid underneath it: a cell is on
+the track when its corner falls inside the line.
+
+## Tracks
+
+Twelve of them, named after places rather than events: Monza, Spa, Silverstone,
+Monaco, Suzuka, Interlagos, Imola, Hockenheim, Zandvoort, Hungaroring,
+Spielberg and Montréal.
+
+They are hand-drawn on a grid of sixty to ninety cells, which is nowhere near
+enough to reproduce a real circuit — a hairpin comes out as a single cell. What
+they reproduce is the character: Monza fast and barely interrupted, Monaco all
+corners, Suzuka crossing over itself, Hockenheim two enormous straights. The
+track chooser says so on the screen where you pick one.
+
+A perfect lap, found by searching every (position, velocity) a car can be in,
+takes between 35 and 68 moves depending on the track.
 
 ## Running it locally
 
@@ -109,7 +132,7 @@ no dependencies. `sw.js` sits in the root so its scope covers the whole site.
 Built in steps, each one its own commit:
 
 1. Core engine, one track, local human play
-2. Six hand-drawn tracks
+2. Twelve hand-drawn tracks
 3. Greedy and planning agents, then a Q-learning agent trained live in the page
 4. Landing page and install instructions
 5. Screenshot, measurements, final README
