@@ -1,5 +1,14 @@
 # Vector Rally
 
+![Vector Rally](screenshot.png)
+
+> **That picture is a placeholder, not a screenshot — please replace it.** It is
+> drawn by `tools/make-icons.mjs` from the real track geometry, with the real
+> agents driving a real race under the real rules, so the lines are honest: the
+> jagged red one is Greedy, the smooth ones are two Planners. But there is no
+> interface in it, because the script has no browser to photograph. Open the
+> game, take a proper screenshot, and save it over `screenshot.png`.
+
 A racing game for the browser, played on squared paper. Each car has a position
 and a velocity vector. You do not steer the car — you steer its *acceleration*,
 one unit per turn, and live with the momentum that follows.
@@ -218,6 +227,25 @@ their machine to stop animating things.
 The install instructions are there too, with the actual menu items, and so is
 the version number.
 
+
+## Numbers from your own machine
+
+Everything measured above was measured on an AMD Ryzen 9 5900HX laptop under
+Node 24. **Nothing here has been run on a phone**, because there was no phone to
+run it on, and the point of training in the page is that it works on one. The
+figures are all on the screen while it trains, so they can be read off and
+written in:
+
+| | Attempts a second | 150,000 attempts took | Planner, worst move |
+|---|---|---|---|
+| This laptop (Ryzen 9 5900HX, Node 24) | 25,000–33,000 | 4.5–5.9 s | ~3,000 states, 8–18 ms |
+| _Your phone_ | | | |
+| _Your classroom machine_ | | | |
+
+The training screen shows attempts a second, seconds elapsed, states
+remembered and the rolling average as it goes. The race screen shows what the
+planner's last move cost.
+
 ## Running it locally
 
 The game loads its logic as ES modules, so opening `index.html` straight from
@@ -299,10 +327,10 @@ no dependencies. `sw.js` sits in the root so its scope covers the whole site.
 
 ## Status
 
-Built in steps, each one its own commit:
+Built in steps, one commit each:
 
 1. Core engine, one track, local human play
-2. Twelve hand-drawn tracks (on a grid)
+2. Twelve hand-drawn tracks, on a grid
 2b. Continuous track geometry, positions on the lattice, six tracks
 2c. Player count and swipeable track selection
 3a. Greedy and planning agents

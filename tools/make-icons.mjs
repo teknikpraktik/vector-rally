@@ -1,6 +1,7 @@
 /**
- * Draws every icon the app ships with, and writes them as PNG files using
- * nothing but Node's own zlib — the PNG chunks are assembled by hand here.
+ * Draws every picture the app ships with — the icons, and the placeholder
+ * that stands in for a screenshot — using nothing but Node's own zlib: the
+ * PNG chunks are assembled by hand here.
  *
  * Run it from the repository root when the artwork changes:
  *
@@ -27,10 +28,12 @@ const CAR = [47, 111, 143];
 /** Everything is drawn at four times the size and averaged down afterwards. */
 const SUPERSAMPLE = 4;
 
-function canvas(size) {
-  const data = new Uint8ClampedArray(size * size * 4);
+function canvas(size, tall = size) {
+  const data = new Uint8ClampedArray(size * tall * 4);
   const plot = (x, y, color, coverage = 1) => {
-    if (x < 0 || y < 0 || x >= size || y >= size || coverage <= 0) return;
+    x = Math.round(x);
+    y = Math.round(y);
+    if (x < 0 || y < 0 || x >= size || y >= tall || coverage <= 0) return;
     const at = (y * size + x) * 4;
     for (let channel = 0; channel < 3; channel++) {
       data[at + channel] = data[at + channel] * (1 - coverage) + color[channel] * coverage;
@@ -41,8 +44,9 @@ function canvas(size) {
     size,
     data,
     plot,
+    height: tall,
     fill(color) {
-      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) plot(x, y, color);
+      for (let y = 0; y < tall; y++) for (let x = 0; x < size; x++) plot(x, y, color);
     },
     rect(x0, y0, x1, y1, color) {
       for (let y = Math.round(y0); y < Math.round(y1); y++) {
@@ -191,10 +195,10 @@ function chunk(type, body) {
   return Buffer.concat([head, typed, crc]);
 }
 
-function png({ size, pixels }) {
+function png({ size, pixels, height = size }) {
   const header = Buffer.alloc(13);
   header.writeUInt32BE(size, 0);
-  header.writeUInt32BE(size, 4);
+  header.writeUInt32BE(height, 4);
   header[8] = 8;   // bits per channel
   header[9] = 6;   // truecolour with alpha
   header[10] = 0;  // deflate
@@ -202,8 +206,8 @@ function png({ size, pixels }) {
   header[12] = 0;  // no interlacing
 
   const stride = size * 4;
-  const raw = Buffer.alloc((stride + 1) * size);
-  for (let y = 0; y < size; y++) {
+  const raw = Buffer.alloc((stride + 1) * height);
+  for (let y = 0; y < height; y++) {
     raw[y * (stride + 1)] = 0; // filter: none
     Buffer.from(pixels.buffer, y * stride, stride).copy(raw, y * (stride + 1) + 1);
   }
@@ -233,7 +237,154 @@ function ico(image) {
   return Buffer.concat([header, entry, body]);
 }
 
+
+// ---------------------------------------------------------------------------
+// The placeholder that stands in for a screenshot
+// ---------------------------------------------------------------------------
+
+/**
+ * A picture of a race, drawn from the real track geometry by running the real
+ * agents under the real rules. It is *not* a screenshot: there is no interface
+ * in it, because this script has no browser to photograph. It says so across
+ * the bottom of itself, and the README says so too. Replace it with a real one.
+ */
+
+/** Five by seven, which is all the letters this needs. */
+const GLYPHS = {
+  A: ['.###.', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  C: ['.###.', '#...#', '#....', '#....', '#....', '#...#', '.###.'],
+  D: ['####.', '#...#', '#...#', '#...#', '#...#', '#...#', '####.'],
+  E: ['#####', '#....', '#....', '####.', '#....', '#....', '#####'],
+  H: ['#...#', '#...#', '#...#', '#####', '#...#', '#...#', '#...#'],
+  L: ['#....', '#....', '#....', '#....', '#....', '#....', '#####'],
+  N: ['#...#', '##..#', '##..#', '#.#.#', '#..##', '#..##', '#...#'],
+  O: ['.###.', '#...#', '#...#', '#...#', '#...#', '#...#', '.###.'],
+  P: ['####.', '#...#', '#...#', '####.', '#....', '#....', '#....'],
+  R: ['####.', '#...#', '#...#', '####.', '#.#..', '#..#.', '#...#'],
+  S: ['.####', '#....', '#....', '.###.', '....#', '....#', '####.'],
+  T: ['#####', '..#..', '..#..', '..#..', '..#..', '..#..', '..#..'],
+  ' ': ['.....', '.....', '.....', '.....', '.....', '.....', '.....'],
+};
+
+function write(image, text, x, y, scale, colour) {
+  let at = x;
+  for (const letter of text.toUpperCase()) {
+    const glyph = GLYPHS[letter];
+    if (glyph) {
+      glyph.forEach((row, down) => {
+        [...row].forEach((on, across) => {
+          if (on !== '#') return;
+          image.rect(at + across * scale, y + down * scale,
+            at + (across + 1) * scale, y + (down + 1) * scale, colour);
+        });
+      });
+    }
+    at += 6 * scale;
+  }
+  return at;
+}
+
+function stroke(image, points, weight, colour, closed = false) {
+  const count = closed ? points.length : points.length - 1;
+  for (let index = 0; index < count; index++) {
+    const [x0, y0] = points[index];
+    const [x1, y1] = points[(index + 1) % points.length];
+    image.line(x0, y0, x1, y1, weight, colour);
+  }
+}
+
+async function screenshot() {
+  const { applyMove, createInitialState, isFinished } = await import('../engine.js');
+  const { chooseMove } = await import('../agents.js');
+  const { getTrack } = await import('../tracks.js');
+
+  const width = 1280;
+  const height = 760;
+  const board = getTrack('silverstone');
+  const image = canvas(width, height);
+  image.fill(PAPER);
+
+  const pad = 40;
+  const { minX, maxX, minY, maxY } = board.bounds;
+  const size = Math.min((width - pad * 2) / (maxX - minX), (height - pad * 2 - 60) / (maxY - minY));
+  const ox = (width - (maxX - minX) * size) / 2 - minX * size;
+  const oy = (height - 60 - (maxY - minY) * size) / 2 - minY * size;
+  const at = (x, y) => [ox + x * size, oy + y * size];
+
+  // The surface, asked of the geometry itself rather than guessed at.
+  for (let py = 0; py < height - 60; py++) {
+    for (let px = 0; px < width; px++) {
+      if (board.contains((px - ox) / size, (py - oy) / size)) image.plot(px, py, [251, 249, 243]);
+    }
+  }
+  for (let x = Math.ceil(minX) - 2; x <= maxX + 2; x++) {
+    const [sx] = at(x, 0);
+    image.rect(sx, 0, sx + 1, height - 60, GRID);
+  }
+  for (let y = Math.ceil(minY) - 2; y <= maxY + 2; y++) {
+    const [, sy] = at(0, y);
+    image.rect(0, sy, width, sy + 1, GRID);
+  }
+
+  for (const loop of [board.outer, board.inner]) {
+    stroke(image, loop.map(point => at(point[0], point[1])), Math.max(1, size * 0.06), GRAPHITE, true);
+  }
+
+  const every = Math.max(1, Math.round(6 / (board.samples[0].step || 0.4)));
+  for (let index = 0; index < board.samples.length; index += every) {
+    const sample = board.samples[index];
+    const [sx, sy] = at(sample.x, sample.y);
+    const wing = size * 0.5;
+    for (const side of [-1, 1]) {
+      image.line(sx - (sample.tx * 0.7 - sample.ty * side * 0.7) * wing,
+        sy - (sample.ty * 0.7 + sample.tx * side * 0.7) * wing, sx, sy,
+        Math.max(1, size * 0.07), [59, 59, 64, 0.32]);
+    }
+  }
+
+  const gate = board.gates[0];
+  for (let step = 0; step < 16; step += 2) {
+    const from = step / 16;
+    const to = (step + 1) / 16;
+    const along = share => [
+      gate.a[0] + (gate.b[0] - gate.a[0]) * share,
+      gate.a[1] + (gate.b[1] - gate.a[1]) * share,
+    ];
+    image.line(...at(...along(from)), ...at(...along(to)), size * 0.22, GRAPHITE);
+  }
+
+  // A real race, a dozen turns in.
+  const colours = [[47, 111, 143], [161, 80, 63], [74, 122, 68]];
+  let state = createInitialState({
+    trackId: board.id,
+    seed: 20260920,
+    players: [
+      { name: 'P1', kind: 'planner' },
+      { name: 'P2', kind: 'greedy' },
+      { name: 'P3', kind: 'planner' },
+    ],
+  });
+  for (let move = 0; move < 33 && !isFinished(state); move++) {
+    state = applyMove(state, chooseMove(state).move);
+  }
+  state.players.forEach((player, index) => {
+    const points = [...player.trace, player.pos].map(point => at(point[0], point[1]));
+    stroke(image, points, Math.max(1.5, size * 0.09), [...colours[index], 0.65]);
+    for (const [x, y] of points.slice(0, -1)) image.disc(x, y, size * 0.13, [...colours[index], 0.8]);
+    const [cx, cy] = points[points.length - 1];
+    image.disc(cx, cy, size * 0.42, colours[index]);
+    image.ring(cx, cy, size * 0.42, Math.max(1.5, size * 0.1), GRAPHITE);
+  });
+
+  // And a line across the bottom saying what this is.
+  image.rect(0, height - 60, width, height, [233, 226, 212]);
+  image.rect(0, height - 60, width, height - 57, GRAPHITE);
+  write(image, 'PLACEHOLDER  NOT A REAL SCREENSHOT', 28, height - 42, 3, GRAPHITE);
+  return { size: width, pixels: image.data, height };
+}
+
 const files = [
+  ['screenshot.png', png(await screenshot())],
   ['icon-192.png', png(icon(192, { cells: 10 }))],
   ['icon-512.png', png(icon(512, { cells: 12 }))],
   ['icon-maskable-512.png', png(icon(512, { cells: 12, inset: 0.68 }))],
