@@ -206,6 +206,18 @@ works out exactly what learning can only approximate. It is also not reliable â€
 worth saying out loud in a lesson rather than re-rolling until it behaves.
 
 
+## The front page
+
+The game opens on a page that says what it is in three lines, shows a car
+braking for a corner one turn at a time, and has a Play button. The picture is
+not a drawing: the planner drives a real lap of Monaco under the real rules and
+what you see is where it actually went, so the dots spread out on the way in
+and bunch together through the hairpin. It holds still for anyone who has asked
+their machine to stop animating things.
+
+The install instructions are there too, with the actual menu items, and so is
+the version number.
+
 ## Running it locally
 
 The game loads its logic as ES modules, so opening `index.html` straight from

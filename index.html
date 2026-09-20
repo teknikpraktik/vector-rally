@@ -92,6 +92,60 @@ input[type="text"]:focus-visible { outline: 3px solid var(--accent); outline-off
 .screen { display: none; }
 .screen.on { display: flex; }
 
+/* --- The front page ----------------------------------------------------- */
+
+#landing {
+  flex-direction: column;
+  gap: 24px;
+  min-height: 100%;
+  padding: calc(var(--safe-t) + 24px) calc(var(--safe-r) + 24px)
+           calc(var(--safe-b) + 24px) calc(var(--safe-l) + 24px);
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+#landing h1 { font-size: clamp(38px, 8vmin, 84px); line-height: 1.02; }
+.lead {
+  font-size: clamp(19px, 2.4vmin + 12px, 32px);
+  color: var(--ink);
+  margin-bottom: 0.8em;
+}
+.three {
+  font-size: clamp(16px, 1.4vmin + 12px, 22px);
+  margin: 0 0 1.1em;
+  padding-left: 1.2em;
+}
+.three li { margin-bottom: 0.45em; }
+button.huge { font-size: clamp(19px, 2vmin + 12px, 26px); min-height: 72px; padding: 12px 40px; }
+
+.demo { margin: 0; }
+.demo canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 rgba(38, 38, 42, 0.18);
+  background: var(--paper-bright);
+}
+.demo figcaption {
+  color: var(--ink-soft);
+  font-size: clamp(14px, 1vmin + 11px, 18px);
+  margin-top: 8px;
+}
+
+.install h2 { font-size: clamp(19px, 2vmin + 10px, 26px); }
+.install p { font-size: clamp(15px, 1.1vmin + 12px, 19px); }
+
+@media (min-width: 900px) {
+  #landing { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 28px; }
+  #landing .hero { grid-column: 1; }
+  #landing .demo { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  #landing .install { grid-column: 1; }
+  #landing .version-bar { grid-column: 1 / -1; }
+}
+
 /* --- Setup ------------------------------------------------------------- */
 
 #players {
@@ -418,6 +472,47 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
 </head>
 <body>
 
+<!-- ======================= The front of the shop ======================= -->
+<section class="screen on" id="landing">
+  <div class="hero">
+    <h1>Vector Rally</h1>
+    <p class="lead">You do not steer the car. You steer its acceleration.</p>
+    <ol class="three">
+      <li>Your car has a speed. Each turn you change it by one — up, down or neither,
+        in each direction.</li>
+      <li>The car then moves by its <b>whole new speed</b>. Working out where that
+        lands is the game.</li>
+      <li>Leave the track and you lose your speed and your turn. One lap, first one
+        home wins.</li>
+    </ol>
+    <button class="primary huge" id="play">Play</button>
+  </div>
+
+  <figure class="demo">
+    <canvas id="demo" width="760" height="470" role="img"
+      aria-label="A car braking for a corner, one turn at a time"></canvas>
+    <figcaption>A car braking for a corner. Each dot is one turn: far apart where it
+      is quick, close together where it is slow.</figcaption>
+  </figure>
+
+  <div class="panel install">
+    <h2>Put it on the home screen</h2>
+    <p><b>Android, in Chrome:</b> the ⋮ menu, top right → <b>Add to Home screen</b>
+      (it may say <b>Install app</b>).</p>
+    <p><b>iPhone and iPad, in Safari:</b> the share button in the toolbar — the square
+      with an arrow coming out of the top — then <b>scroll down the share sheet</b> and
+      pick <b>Add to Home Screen</b>. It is not in Safari’s own menu, and you will not
+      see it until you have scrolled.</p>
+    <p class="hint">Load the game once with a network connection. After that it works
+      with no network at all.</p>
+  </div>
+
+  <div class="version-bar">
+    <span>Vector Rally v<span data-version>…</span> · built as a teaching example</span>
+    <button class="quiet" id="check-updates">Check for updates</button>
+  </div>
+</section>
+
 <!-- ======================= Who is playing ======================= -->
 <section class="screen on" id="players">
   <header>
@@ -475,8 +570,8 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
   </details>
 
   <div class="version-bar">
-    <span>Vector Rally v<span data-version>…</span> · built as a teaching example</span>
-    <button class="quiet" id="check-updates">Check for updates</button>
+    <span>Vector Rally v<span data-version>…</span></span>
+    <button class="quiet" id="back-to-landing">Back to the front page</button>
   </div>
 </section>
 
@@ -946,6 +1041,142 @@ function watchThem() {
 }
 
 // ---------------------------------------------------------------------------
+// The demonstration on the front page
+// ---------------------------------------------------------------------------
+
+/**
+ * A car taking a corner, one turn at a time. The moves are not drawn by hand:
+ * the planner drives a real track with the real rules, and what you see is
+ * where it actually went. The dots spread out on the way in and bunch up
+ * through the corner, which is the whole game in one picture.
+ */
+const demo = { board: null, path: [], showing: 2, timer: null };
+
+function buildDemo() {
+  if (demo.path.length > 0) return;
+  const board = getTrack('monaco');
+  let state = createInitialState({
+    trackId: board.id, seed: 20260920, players: [{ name: 'D', kind: 'planner' }],
+  });
+  const path = [[...state.players[0].pos]];
+  for (let move = 0; move < 16 && !isFinished(state); move++) {
+    state = applyMove(state, chooseMove(state).move);
+    path.push([...state.players[0].pos]);
+  }
+  demo.board = board;
+  demo.path = path;
+}
+
+function runDemo() {
+  buildDemo();
+  // Not every browser answers this, and the picture matters more than the
+  // movement does.
+  const still = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  demo.showing = still ? demo.path.length : 2;
+  drawDemo();
+  if (still) return;
+  window.clearInterval(demo.timer);
+  demo.timer = window.setInterval(() => {
+    if (!$('#landing').classList.contains('on')) { stopDemo(); return; }
+    demo.showing = demo.showing >= demo.path.length ? 2 : demo.showing + 1;
+    drawDemo();
+  }, 700);
+}
+
+function stopDemo() {
+  window.clearInterval(demo.timer);
+  demo.timer = null;
+}
+
+function drawDemo() {
+  const canvasEl = $('#demo');
+  if (!canvasEl || demo.path.length === 0) return;
+  const paint = canvasEl.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const width = 760;
+  const height = 470;
+  canvasEl.width = Math.round(width * ratio);
+  canvasEl.height = Math.round(height * ratio);
+  paint.setTransform(ratio, 0, 0, ratio, 0, 0);
+  paint.fillStyle = '#fbf9f3';
+  paint.fillRect(0, 0, width, height);
+
+  // Close enough in that the squares, and the car, are visible across a room.
+  const shown = demo.path.slice(0, demo.showing);
+  const xs = demo.path.map(point => point[0]);
+  const ys = demo.path.map(point => point[1]);
+  const pad = 5;
+  const minX = Math.min(...xs) - pad;
+  const maxX = Math.max(...xs) + pad;
+  const minY = Math.min(...ys) - pad;
+  const maxY = Math.max(...ys) + pad;
+  const size = Math.min(width / (maxX - minX), height / (maxY - minY));
+  const ox = (width - (maxX - minX) * size) / 2 - minX * size;
+  const oy = (height - (maxY - minY) * size) / 2 - minY * size;
+  const at = (x, y) => [ox + x * size, oy + y * size];
+
+  paint.strokeStyle = '#c3d0db';
+  paint.lineWidth = 1;
+  paint.beginPath();
+  for (let x = Math.ceil(minX); x <= maxX; x++) {
+    const [sx] = at(x, 0);
+    paint.moveTo(Math.round(sx) + 0.5, 0);
+    paint.lineTo(Math.round(sx) + 0.5, height);
+  }
+  for (let y = Math.ceil(minY); y <= maxY; y++) {
+    const [, sy] = at(0, y);
+    paint.moveTo(0, Math.round(sy) + 0.5);
+    paint.lineTo(width, Math.round(sy) + 0.5);
+  }
+  paint.stroke();
+
+  const outline = loop => {
+    paint.beginPath();
+    loop.forEach(([x, y], index) => {
+      const [sx, sy] = at(x, y);
+      if (index === 0) paint.moveTo(sx, sy); else paint.lineTo(sx, sy);
+    });
+    paint.closePath();
+  };
+  paint.strokeStyle = '#3b3b40';
+  paint.lineWidth = 2.4;
+  paint.lineJoin = 'round';
+  outline(demo.board.outer);
+  paint.stroke();
+  outline(demo.board.inner);
+  paint.stroke();
+
+  if (shown.length > 1) {
+    paint.strokeStyle = 'rgba(47, 111, 143, 0.75)';
+    paint.lineWidth = Math.max(3, size * 0.16);
+    paint.lineJoin = 'round';
+    paint.beginPath();
+    shown.forEach(([x, y], index) => {
+      const [sx, sy] = at(x, y);
+      if (index === 0) paint.moveTo(sx, sy); else paint.lineTo(sx, sy);
+    });
+    paint.stroke();
+  }
+  paint.fillStyle = 'rgba(47, 111, 143, 0.85)';
+  for (const [x, y] of shown.slice(0, -1)) {
+    const [sx, sy] = at(x, y);
+    paint.beginPath();
+    paint.arc(sx, sy, Math.max(3, size * 0.17), 0, Math.PI * 2);
+    paint.fill();
+  }
+
+  const [carX, carY] = at(...shown[shown.length - 1]);
+  paint.fillStyle = '#2f6f8f';
+  paint.strokeStyle = '#26262a';
+  paint.lineWidth = Math.max(2, size * 0.12);
+  paint.beginPath();
+  paint.arc(carX, carY, Math.max(6, size * 0.4), 0, Math.PI * 2);
+  paint.fill();
+  paint.stroke();
+}
+
+// ---------------------------------------------------------------------------
 // Teaching a Learner
 // ---------------------------------------------------------------------------
 
@@ -1157,9 +1388,10 @@ function drawCurve() {
 }
 
 function showScreen(name) {
-  for (const id of ['players', 'tracks', 'training', 'race']) {
+  for (const id of ['landing', 'players', 'tracks', 'training', 'race']) {
     $(`#${id}`).classList.toggle('on', id === name);
   }
+  if (name === 'landing') window.setTimeout(runDemo, 0); else stopDemo();
   if (name === 'tracks') {
     buildTracks();
     window.requestAnimationFrame(() => scrollToCard(0));
@@ -1762,6 +1994,8 @@ function escapeHtml(text) {
 // ---------------------------------------------------------------------------
 
 $('#start').addEventListener('click', () => startRace());
+$('#play').addEventListener('click', () => showScreen('players'));
+$('#back-to-landing').addEventListener('click', () => showScreen('landing'));
 $('#to-tracks').addEventListener('click', () => showScreen('tracks'));
 $('#watch').addEventListener('click', watchThem);
 $('#to-training').addEventListener('click', () => showScreen('training'));
@@ -1977,6 +2211,8 @@ $('#check-updates').addEventListener('click', async () => {
 
 buildPad();
 buildPlayers();
+// The front page is what opens, so its picture is drawn once the rest is up.
+window.setTimeout(runDemo, 0);
 </script>
 </body>
 </html>
