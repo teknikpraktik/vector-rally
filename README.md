@@ -38,6 +38,10 @@ Every car starts on the finish line, side by side, at a standstill. 1–4 player
 take turns on the same device. Mouse and touch only: press one of the nine pad
 buttons and let go to take that move.
 
+Starting a race is two screens: how many are playing, then which track — a
+carousel you swipe through, one card at a time, each with the track drawn from
+its own geometry.
+
 ## The track
 
 A track is an **area of the plane** bounded by two closed curves, not a grid of

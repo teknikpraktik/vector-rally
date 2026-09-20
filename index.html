@@ -94,7 +94,7 @@ input[type="text"]:focus-visible { outline: 3px solid var(--accent); outline-off
 
 /* --- Setup ------------------------------------------------------------- */
 
-#setup {
+#players {
   flex-direction: column;
   gap: 18px;
   min-height: 100%;
@@ -121,26 +121,7 @@ legend { font-weight: 650; padding: 0 0 6px; }
 
 .hint { color: var(--ink-soft); font-size: 0.86em; }
 
-.track-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-.track {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 10px;
-  align-items: start;
-  border: 2px solid var(--ink-soft);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  cursor: pointer;
-  background: var(--paper);
-}
-.track:has(input:checked) { border-color: var(--ink); background: #fff; box-shadow: inset 0 0 0 1px var(--ink); }
-.track input { margin-top: 6px; width: 20px; height: 20px; accent-color: var(--accent); }
-.track .name { font-weight: 650; }
-.track .blurb { color: var(--ink-soft); font-size: 0.86em; }
-
 .choice-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.choice { min-width: 48px; text-align: center; }
-.choice[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
 
 .players { display: grid; gap: 10px; }
 .player-row { display: grid; grid-template-columns: 34px 1fr; gap: 10px; align-items: center; }
@@ -161,6 +142,97 @@ legend { font-weight: 650; padding: 0 0 6px; }
   color: var(--ink-soft);
   font-size: 0.85em;
 }
+
+/* --- Picking a track ---------------------------------------------------- */
+
+h2 { margin-bottom: 0.5em; }
+
+button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
+
+.count-row { display: flex; gap: 10px; margin-bottom: 16px; }
+.count-row button {
+  flex: 1 1 0;
+  min-height: 68px;
+  font-size: clamp(22px, 4vmin, 32px);
+  font-weight: 650;
+}
+.count-row button[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
+
+#tracks {
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+  padding: calc(var(--safe-t) + 16px) calc(var(--safe-r) + 16px)
+           calc(var(--safe-b) + 16px) calc(var(--safe-l) + 16px);
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+}
+.pick-head { display: flex; align-items: center; gap: 14px; }
+.pick-head h2 { margin: 0; }
+
+.carousel-row { display: flex; align-items: center; gap: 8px; min-height: 0; flex: 1 1 auto; }
+.arrow {
+  flex: 0 0 auto;
+  width: 48px;
+  min-height: 48px;
+  height: 64px;
+  font-size: 30px;
+  line-height: 1;
+  padding: 0;
+}
+
+.carousel {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  padding: 4px;
+}
+.carousel::-webkit-scrollbar { display: none; }
+
+.card {
+  flex: 0 0 min(78%, 430px);
+  scroll-snap-align: center;
+  background: var(--paper-bright);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 3px 3px 0 rgba(38, 38, 42, 0.18);
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.card canvas { width: 100%; height: auto; display: block; border-radius: 6px; }
+.card h3 { margin: 0; font-size: clamp(20px, 3vmin + 8px, 30px); }
+.card p { margin: 0; color: var(--ink-soft); font-size: clamp(14px, 1vmin + 12px, 18px); }
+
+.dots { display: flex; justify-content: center; gap: 8px; }
+.dots button {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  display: grid;
+  place-items: center;
+}
+.dots button::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid var(--ink-soft);
+}
+.dots button[aria-selected="true"]::after { background: var(--ink); border-color: var(--ink); }
+
+.disclaimer { text-align: center; margin: 0; }
 
 /* --- Race -------------------------------------------------------------- */
 
@@ -315,66 +387,53 @@ legend { font-weight: 650; padding: 0 0 6px; }
 </head>
 <body>
 
-<!-- ======================= Setup ======================= -->
-<section class="screen on" id="setup">
+<!-- ======================= Who is playing ======================= -->
+<section class="screen on" id="players">
   <header>
     <h1>Vector Rally</h1>
     <p class="tagline">You do not steer the car. You steer its acceleration.</p>
   </header>
 
   <div class="panel">
-    <fieldset>
-      <legend>Track</legend>
-      <p class="hint">Twelve tracks named after places that race cars have been driven
-        round. They are drawn by hand on a grid about eighty cells wide, which is
-        nowhere near enough to reproduce a real circuit — a hairpin comes out as a
-        single cell. What they are after is the character of the place: Monza fast and
-        barely interrupted, Monaco all corners. Treat them as sketches, not as maps.</p>
-      <div class="track-list" id="track-list"></div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Players</legend>
-      <div class="choice-row" id="player-count" role="group" aria-label="Number of players"></div>
-      <div class="players" id="players"></div>
-    </fieldset>
-
-    <button class="primary" id="start" style="width: 100%">Start race</button>
-    <p class="hint" style="margin: 10px 0 0">One lap, everybody on the line together.</p>
+    <h2>How many are playing?</h2>
+    <div class="count-row" id="player-count" role="group" aria-label="Number of players"></div>
+    <div class="players" id="player-names"></div>
+    <button class="primary big" id="to-tracks">Continue</button>
   </div>
 
   <details class="about panel">
     <summary>How it works</summary>
     <ul>
-      <li>Your car has a position and a velocity. Each turn you change the velocity
-        by −1, 0 or +1 in each direction — nine choices — and the car then moves by
-        the whole new velocity.</li>
-      <li>Neither part of the velocity may go outside −5…5.</li>
+      <li>Your car stands on a corner of the paper, where two lines cross. It has a
+        position and a velocity, both pairs of whole numbers.</li>
+      <li>Each turn you change the velocity by −1, 0 or +1 in each direction — nine
+        choices — and the car then travels in a straight line by the whole new
+        velocity. Neither part of it may leave −5…5.</li>
       <li><b>Work out where that puts you.</b> The game will not show you: adding the
         velocity to the position is the part worth practising. The pad tells you what
         the velocity becomes, and nothing else.</li>
       <li>The whole line from where you are to where you land has to stay on the
-        track. At speed 5 that line is five units long, and it can cut the corner
-        out of a bend and back in again with both its ends still on the track. That
+        track. At speed 5 that line is five units long, and it can cut the corner out
+        of a bend and back in again with both of its ends still on the track. That
         counts as leaving the track, because it is.</li>
       <li>Go off and the car is put back on the last whole-number point it reached
-        with its speed set to zero, which costs you the turn. The game will show you
+        with its speed set to zero, which costs you the turn. The game shows you
         exactly where the line left the track before it moves the car back.</li>
-      <li>A move that is genuinely impossible — another car standing exactly on the
-        line, or over the speed limit — is crossed out and cannot be taken.</li>
+      <li>Cars are points. Two may not stand on the same point, and a move whose line
+        goes exactly through another car is impossible — but passing close is not.</li>
+      <li>A move that cannot happen at all is crossed out and cannot be taken.</li>
       <li>One lap. It counts when you cross the line the way the arrows point, having
         passed every hidden checkpoint in order along the way. You cannot see the
         checkpoints; following the arrows round is enough to collect them.</li>
     </ul>
-    <p><b>The car stands on a corner of the paper</b> — a crossing of two lines — not
-      in a square. The edge of the track is a curve that pays the squares no
-      attention: it is drawn as a thin line exactly where the mathematics puts it, so
-      what you see is what the game tests against.</p>
+    <p><b>The edge of the track</b> is a curve that pays the squares no attention. It
+      is drawn as a thin line exactly where the mathematics puts it, so what you see
+      is what the game tests against.</p>
     <p><b>Taking a turn:</b> press one of the nine buttons and let go to take that
       move. Sliding off the button before letting go cancels it. Drag the track to
       move around it, pinch or scroll to zoom.</p>
-    <p><b>Install it:</b> on Android, Chrome's ⋮ menu → “Add to Home screen”. On iOS,
-      the share button in Safari's toolbar → scroll down → “Add to Home Screen”.
+    <p><b>Install it:</b> on Android, Chrome’s ⋮ menu → “Add to Home screen”. On iOS,
+      the share button in Safari’s toolbar → scroll down → “Add to Home Screen”.
       Load the game once with a network connection and it works offline afterwards.</p>
   </details>
 
@@ -384,6 +443,24 @@ legend { font-weight: 650; padding: 0 0 6px; }
   </div>
 </section>
 
+<!-- ======================= Which track ======================= -->
+<section class="screen" id="tracks">
+  <header class="pick-head">
+    <button class="quiet" id="back-to-players">Back</button>
+    <h2>Pick a track</h2>
+  </header>
+
+  <div class="carousel-row">
+    <button class="arrow" id="previous-track" aria-label="Previous track">‹</button>
+    <div class="carousel" id="carousel" tabindex="-1"></div>
+    <button class="arrow" id="next-track" aria-label="Next track">›</button>
+  </div>
+  <div class="dots" id="dots" role="tablist" aria-label="Tracks"></div>
+
+  <button class="primary big" id="start">Start race</button>
+  <p class="hint disclaimer">Drawn by hand, not measured. They are after the character
+    of a place, not its shape.</p>
+</section>
 <!-- ======================= Race ======================= -->
 <section class="screen" id="race">
   <div class="hud">
@@ -457,7 +534,13 @@ const ui = {
   state: null,
   selected: null,        // the move being previewed, { ax, ay }
   lastKey: null,
-  setup: { trackId: 'monza', players: 2, names: ['P1', 'P2', 'P3', 'P4'] },
+  setup: {
+    players: 2,
+    names: ['P1', 'P2', 'P3', 'P4'],
+    cards: [],
+    showing: 0,
+    anywhereSeed: 0,
+  },
   camera: { scale: 26, centre: [0, 0], mode: 'follow' },
   pointers: new Map(),
   pinch: null,
@@ -477,48 +560,27 @@ const view = { width: 0, height: 0 };
 // Setup screen
 // ---------------------------------------------------------------------------
 
-function buildSetup() {
-  const choices = [
-    ...listTracks().map(track => ({ id: track.id, name: track.name, blurb: track.character })),
-    { id: 'anywhere', name: 'Anywhere', blurb: 'A track drawn on the spot from the seed of '
-      + 'the race, so the same seed always draws the same one.' },
-  ];
-  $('#track-list').innerHTML = choices.map(track => `
-    <label class="track">
-      <input type="radio" name="track" value="${track.id}"
-        ${track.id === ui.setup.trackId ? 'checked' : ''}>
-      <span>
-        <span class="name">${escapeHtml(track.name)}</span>
-        <span class="blurb">${escapeHtml(track.blurb)}</span>
-      </span>
-    </label>`).join('');
-  $('#track-list').addEventListener('change', event => {
-    ui.setup.trackId = event.target.value;
-  });
-
-  $('#player-count').innerHTML = [1, 2, 3, 4].map(count =>
-    `<button class="choice quiet" data-count="${count}"
-      aria-pressed="${count === ui.setup.players}">${count}</button>`).join('');
+function buildPlayers() {
+  $(`#player-count`).innerHTML = [1, 2, 3, 4].map(count =>
+    `<button data-count="${count}" aria-pressed="${count === ui.setup.players}">${count}</button>`).join('');
   $('#player-count').addEventListener('click', event => {
     const button = event.target.closest('[data-count]');
     if (!button) return;
     ui.setup.players = Number(button.dataset.count);
-    refreshSetup();
+    refreshPlayers();
   });
-
-  $('#players').addEventListener('input', event => {
+  $('#player-names').addEventListener('input', event => {
     const field = event.target.closest('[data-player]');
     if (field) ui.setup.names[Number(field.dataset.player)] = field.value;
   });
-
-  refreshSetup();
+  refreshPlayers();
 }
 
-function refreshSetup() {
+function refreshPlayers() {
   for (const button of document.querySelectorAll('[data-count]')) {
     button.setAttribute('aria-pressed', String(Number(button.dataset.count) === ui.setup.players));
   }
-  $('#players').innerHTML = Array.from({ length: ui.setup.players }, (unused, index) => `
+  $('#player-names').innerHTML = Array.from({ length: ui.setup.players }, (unused, index) => `
     <div class="player-row">
       <svg class="swatch" viewBox="0 0 34 34" aria-hidden="true">
         ${symbolMarkup(PLAYER_SYMBOLS[index], PLAYER_COLORS[index])}
@@ -538,6 +600,172 @@ function symbolMarkup(symbol, color) {
 }
 
 // ---------------------------------------------------------------------------
+// The track carousel
+// ---------------------------------------------------------------------------
+
+/**
+ * One card per track, each with a drawing of the track made from its own
+ * geometry. Anywhere is a card like the others, drawn from a seed picked when
+ * the screen opens — and that same seed is the one the race is run on, so the
+ * track on the card is the track you get.
+ */
+function buildTracks() {
+  const bits = new Uint32Array(1);
+  crypto.getRandomValues(bits);
+  ui.setup.anywhereSeed = bits[0] % 2147483647;
+
+  const cards = [
+    ...listTracks().map(track => ({ id: track.id, track })),
+    { id: 'anywhere', track: generateTrack(ui.setup.anywhereSeed).track, name: 'Anywhere',
+      character: 'A different track every time, drawn on the spot' },
+  ];
+  ui.setup.cards = cards.map(card => card.id);
+
+  $('#carousel').innerHTML = cards.map(card => `
+    <article class="card" data-track="${card.id}">
+      <canvas width="420" height="250" role="img"
+        aria-label="A drawing of ${escapeHtml(card.name || card.track.name)}"></canvas>
+      <h3>${escapeHtml(card.name || card.track.name)}</h3>
+      <p>${escapeHtml(card.character || card.track.character)}</p>
+    </article>`).join('');
+
+  $('#carousel').querySelectorAll('.card').forEach((element, index) => {
+    drawThumbnail(element.querySelector('canvas'), cards[index].track);
+  });
+
+  $('#dots').innerHTML = cards.map((card, index) => `
+    <button role="tab" data-dot="${index}" aria-selected="${index === 0}"
+      aria-label="${escapeHtml(card.name || card.track.name)}"></button>`).join('');
+
+  showing(0);
+}
+
+function showing(index) {
+  ui.setup.showing = Math.max(0, Math.min(ui.setup.cards.length - 1, index));
+  for (const dot of document.querySelectorAll('[data-dot]')) {
+    dot.setAttribute('aria-selected', String(Number(dot.dataset.dot) === ui.setup.showing));
+  }
+}
+
+function scrollToCard(index) {
+  const carousel = $('#carousel');
+  const cards = carousel.querySelectorAll('.card');
+  const wanted = Math.max(0, Math.min(cards.length - 1, index));
+  showing(wanted);
+  const card = cards[wanted];
+  if (!card) return;
+  // Setting the position rather than calling scrollTo: the smooth part is
+  // the stylesheet’s business, and this works the same everywhere.
+  carousel.scrollLeft = card.offsetLeft - (carousel.clientWidth - card.clientWidth) / 2;
+}
+/** Which card is nearest the middle of the window. */
+function whichCard() {
+  const carousel = $('#carousel');
+  const middle = carousel.scrollLeft + carousel.clientWidth / 2;
+  let best = 0;
+  let bestGap = Infinity;
+  carousel.querySelectorAll('.card').forEach((card, index) => {
+    const gap = Math.abs(card.offsetLeft + card.clientWidth / 2 - middle);
+    if (gap < bestGap) { bestGap = gap; best = index; }
+  });
+  return best;
+}
+
+/** The track itself, drawn small, from the same geometry the race is run on. */
+function drawThumbnail(element, board) {
+  const paint = element.getContext('2d');
+  const ratio = window.devicePixelRatio || 1;
+  const width = element.width;
+  const height = element.height;
+  element.width = Math.round(width * ratio);
+  element.height = Math.round(height * ratio);
+  paint.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+  const { minX, maxX, minY, maxY } = board.bounds;
+  // Enough room that the stub of the finish line is not clipped off.
+  const pad = 18;
+  const scale = Math.min((width - pad * 2) / (maxX - minX), (height - pad * 2) / (maxY - minY));
+  const offsetX = (width - (maxX - minX) * scale) / 2 - minX * scale;
+  const offsetY = (height - (maxY - minY) * scale) / 2 - minY * scale;
+  const at = (x, y) => [offsetX + x * scale, offsetY + y * scale];
+
+  paint.fillStyle = '#f4f1e8';
+  paint.fillRect(0, 0, width, height);
+
+  const outline = loop => {
+    loop.forEach(([x, y], index) => {
+      const [sx, sy] = at(x, y);
+      if (index === 0) paint.moveTo(sx, sy); else paint.lineTo(sx, sy);
+    });
+    paint.closePath();
+  };
+
+  paint.beginPath();
+  outline(board.outer);
+  outline(board.inner);
+  paint.fillStyle = '#fbf9f3';
+  paint.fill('evenodd');
+
+  // A hint of the squared paper, kept faint so the shape reads from the back
+  // of a classroom.
+  paint.save();
+  paint.beginPath();
+  outline(board.outer);
+  outline(board.inner);
+  paint.clip('evenodd');
+  paint.strokeStyle = '#ccd7e1';
+  paint.lineWidth = 1;
+  paint.beginPath();
+  for (let x = Math.ceil(minX); x <= maxX; x += 2) {
+    const [sx] = at(x, 0);
+    paint.moveTo(sx, 0);
+    paint.lineTo(sx, height);
+  }
+  for (let y = Math.ceil(minY); y <= maxY; y += 2) {
+    const [, sy] = at(0, y);
+    paint.moveTo(0, sy);
+    paint.lineTo(width, sy);
+  }
+  paint.stroke();
+  paint.restore();
+
+  paint.strokeStyle = '#3b3b40';
+  paint.lineWidth = 1.6;
+  paint.lineJoin = 'round';
+  paint.beginPath();
+  outline(board.outer);
+  outline(board.inner);
+  paint.stroke();
+
+  const gate = board.gates[0];
+  paint.lineWidth = 4;
+  paint.strokeStyle = '#26262a';
+  paint.beginPath();
+  const [ax, ay] = at(gate.a[0], gate.a[1]);
+  const [bx, by] = at(gate.b[0], gate.b[1]);
+  paint.moveTo(ax, ay);
+  paint.lineTo(bx, by);
+  paint.stroke();
+
+  // Two arrows, so which way round is clear before the race starts.
+  paint.strokeStyle = 'rgba(59, 59, 64, 0.5)';
+  paint.lineWidth = 2;
+  paint.lineCap = 'round';
+  paint.beginPath();
+  for (const share of [0.25, 0.7]) {
+    const sample = board.samples[Math.floor(board.samples.length * share)];
+    const [sx, sy] = at(sample.x, sample.y);
+    const wing = Math.max(5, scale * 0.9);
+    for (const side of [-1, 1]) {
+      paint.moveTo(sx - (sample.tx * 0.8 - sample.ty * side * 0.8) * wing,
+        sy - (sample.ty * 0.8 + sample.tx * side * 0.8) * wing);
+      paint.lineTo(sx, sy);
+    }
+  }
+  paint.stroke();
+}
+
+// ---------------------------------------------------------------------------
 // Starting and ending a race
 // ---------------------------------------------------------------------------
 
@@ -553,12 +781,13 @@ function startRace() {
     name: ui.setup.names[index] || `P${index + 1}`,
     kind: 'human',
   }));
-  const seed = newSeed();
-  // Anywhere is drawn from the seed, and its id carries the seed with it, so
-  // the race can be replayed or reloaded later on the very same track.
-  const trackId = ui.setup.trackId === 'anywhere'
-    ? generateTrack(seed).track.id
-    : ui.setup.trackId;
+  const chosen = ui.setup.cards[ui.setup.showing] || 'monza';
+  // Anywhere is raced on the very track the card showed, so the seed that
+  // drew it is the seed the race runs on.
+  const anywhere = chosen === 'anywhere';
+  const seed = anywhere ? ui.setup.anywhereSeed : newSeed();
+  const trackId = anywhere ? generateTrack(seed).track.id : chosen;
+
   ui.state = createInitialState({
     trackId,
     players,
@@ -567,6 +796,8 @@ function startRace() {
     appVersion: VERSION,
   });
   ui.selected = null;
+  ui.crash = null;
+  ui.waiting = false;
   ui.camera = { scale: 26, centre: [0, 0], mode: 'follow' };
   ui.confirmingEnd = false;
   showScreen('race');
@@ -575,10 +806,14 @@ function startRace() {
 }
 
 function showScreen(name) {
-  $('#setup').classList.toggle('on', name === 'setup');
-  $('#race').classList.toggle('on', name === 'race');
+  for (const id of ['players', 'tracks', 'race']) {
+    $(`#${id}`).classList.toggle('on', id === name);
+  }
+  if (name === 'tracks') {
+    buildTracks();
+    window.requestAnimationFrame(() => scrollToCard(0));
+  }
 }
-
 // ---------------------------------------------------------------------------
 // Making a move
 // ---------------------------------------------------------------------------
@@ -1126,10 +1361,25 @@ function escapeHtml(text) {
 // ---------------------------------------------------------------------------
 
 $('#start').addEventListener('click', startRace);
-$('#to-menu').addEventListener('click', () => showScreen('setup'));
+$('#to-tracks').addEventListener('click', () => showScreen('tracks'));
+$('#back-to-players').addEventListener('click', () => showScreen('players'));
+$('#previous-track').addEventListener('click', () => scrollToCard(ui.setup.showing - 1));
+$('#next-track').addEventListener('click', () => scrollToCard(ui.setup.showing + 1));
+$('#dots').addEventListener('click', event => {
+  const dot = event.target.closest('[data-dot]');
+  if (dot) scrollToCard(Number(dot.dataset.dot));
+});
+
+// Swiping is the main way through the carousel; the dots follow it.
+let settling = null;
+$('#carousel').addEventListener('scroll', () => {
+  window.clearTimeout(settling);
+  settling = window.setTimeout(() => showing(whichCard()), 60);
+});
+$('#to-menu').addEventListener('click', () => showScreen('players'));
 $('#results-menu').addEventListener('click', () => {
   $('#results').hidden = true;
-  showScreen('setup');
+  showScreen('players');
 });
 $('#again').addEventListener('click', () => {
   $('#results').hidden = true;
@@ -1315,7 +1565,7 @@ $('#check-updates').addEventListener('click', async () => {
 });
 
 buildPad();
-buildSetup();
+buildPlayers();
 </script>
 </body>
 </html>
