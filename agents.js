@@ -20,7 +20,8 @@
  */
 
 import {
-  MAX_SPEED, MOVES, crossesGate, legalMoves, mulberry32, previewMove, segmentInside,
+  MAX_SPEED, MOVES, crossesGate, latticePointsAlong, legalMoves, mulberry32,
+  previewMove, segmentInside,
 } from './engine.js';
 import { getTrack } from './tracks.js';
 
@@ -33,15 +34,16 @@ const SPEED_WEIGHT = 1.35;
 /** Greedy can see one move ahead, so it does avoid driving straight off — if it can. */
 const CRASH_PENALTY = 30;
 
-export const KINDS = Object.freeze(['human', 'greedy', 'planner']);
+export const KINDS = Object.freeze(['human', 'greedy', 'planner', 'learner']);
 
 export const AGENT_NAMES = Object.freeze({
   greedy: 'Greedy',
   planner: 'Planner',
+  learner: 'Learner',
 });
 
 export function isAgent(kind) {
-  return kind === 'greedy' || kind === 'planner';
+  return kind === 'greedy' || kind === 'planner' || kind === 'learner';
 }
 
 /**
@@ -49,8 +51,9 @@ export function isAgent(kind) {
  * Returns { move, stats } where stats is what the interface puts on the screen:
  * how many states were looked at, and whether the planner had to give up.
  */
-export function chooseMove(state, budget = PLANNER_BUDGET) {
+export function chooseMove(state, budget = PLANNER_BUDGET, learned = null) {
   const player = state.players[state.active];
+  if (player.kind === 'learner') return learnerMove(state, learned);
   if (player.kind === 'planner') {
     const planned = planner(state, budget);
     if (planned) return planned;
@@ -301,4 +304,387 @@ function finish(kind, expanded, started, extra) {
     fellBack: false,
     ...extra,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Learner: tabular Q-learning, trained in the page
+// ---------------------------------------------------------------------------
+
+/**
+ * The third driver learns instead of searching. It keeps a value for every
+ * (point, velocity) it has been in and every one of the nine moves, and nudges
+ * those values towards what actually happened. Nothing is written down between
+ * sessions: the curve is the demonstration, and a table that already existed
+ * when the lesson began would take the demonstration away.
+ *
+ * What it learns is "reach the finish line the right way round from wherever
+ * you are". The checkpoints are deliberately not part of the state — the state
+ * is a point and a velocity and nothing else — so the table cannot represent
+ * which checkpoint is next. Going round the track the right way is the only
+ * route to the line that counts, so the checkpoints come along on the way.
+ *
+ * Expect it to lose to the Planner. The track is fixed and fully visible, so a
+ * search works out exactly what learning can only approximate. That a driver
+ * which has had tens of thousands of attempts loses to one that simply
+ * calculates is a more useful thing to know than the other way round.
+ */
+
+export const LEARNER_DEFAULTS = Object.freeze({
+  alpha: 0.2,
+  // The step size falls away as it goes: a rate that stays high keeps
+  // knocking a nearly-settled table about, and the car drives differently
+  // every time you train it.
+  alphaTo: 0.02,
+  gamma: 0.95,
+  epsilonFrom: 1,
+  epsilonTo: 0.05,
+  episodes: 150000,
+  episodeCap: 1500,
+  shaping: false,
+});
+
+/** Leaving the track costs this much on top of the move itself. */
+const OFF_TRACK_COST = 25;
+
+/**
+ * How a (point, velocity) is turned into one number. It lives here on its
+ * own because a table trained in a worker has to be read back on the other
+ * side, and both sides have to number the states the same way.
+ */
+export function stateKeyFor(track) {
+  const originX = Math.floor(track.bounds.minX) - 2;
+  const originY = Math.floor(track.bounds.minY) - 2;
+  const width = Math.ceil(track.bounds.maxX - originX) + 4;
+  return (x, y, vx, vy) =>
+    (((y - originY) * width + (x - originX)) * 11 + vx + MAX_SPEED) * 11 + vy + MAX_SPEED;
+}
+
+/** A trained table, flattened so it can be handed between threads. */
+export function packTable(learned) {
+  const keys = new Int32Array(learned.table.size);
+  const q = new Float32Array(learned.table.size * 9);
+  const tried = new Uint8Array(learned.table.size * 9);
+  let at = 0;
+  for (const [id, row] of learned.table) {
+    keys[at] = id;
+    q.set(row.q, at * 9);
+    tried.set(row.tried, at * 9);
+    at += 1;
+  }
+  return { keys, q, tried };
+}
+
+/** And back again, on the side that will do the driving. */
+export function unpackTable(track, packed) {
+  const table = new Map();
+  for (let at = 0; at < packed.keys.length; at++) {
+    table.set(packed.keys[at], {
+      q: packed.q.subarray(at * 9, at * 9 + 9),
+      tried: packed.tried.subarray(at * 9, at * 9 + 9),
+    });
+  }
+  return { table, key: stateKeyFor(track) };
+}
+
+/**
+ * The chart: moves per episode against episodes, smoothed over a window,
+ * thinned down to something that can be drawn and sent between threads.
+ */
+export function learningCurve(lengths, points = 240, window = 50) {
+  if (lengths.length === 0) return [];
+  const every = Math.max(1, Math.floor(lengths.length / points));
+  const curve = [];
+  for (let at = every; at <= lengths.length; at += every) {
+    const from = Math.max(0, at - window);
+    let total = 0;
+    for (let index = from; index < at; index++) total += lengths[index];
+    curve.push([at, Math.round((total / (at - from)) * 10) / 10]);
+  }
+  return curve;
+}
+
+export function createLearner(track, options = {}) {
+  const settings = { ...LEARNER_DEFAULTS, ...options };
+  const random = mulberry32(settings.seed ?? 20260920);
+  const table = new Map();
+
+  const key = stateKeyFor(track);
+
+  // Everywhere a car could be put down, for the exploring starts. Without them
+  // a random walker would never reach the line from the grid on a track this
+  // long, and the curve would be a flat line along the top of the chart.
+  const places = [];
+  for (let y = Math.floor(track.bounds.minY); y <= Math.ceil(track.bounds.maxY); y++) {
+    for (let x = Math.floor(track.bounds.minX); x <= Math.ceil(track.bounds.maxX); x++) {
+      if (track.contains(x, y)) places.push([x, y]);
+    }
+  }
+
+  // How much of the lap is left, for the optional shaping.
+  const remaining = new Map();
+  if (settings.shaping) {
+    const finishAt = distanceAlong(track, track.gates[0].at);
+    for (const place of places) {
+      remaining.set(place.join(),
+        ((finishAt - distanceAlong(track, place)) + track.length) % track.length);
+    }
+  }
+
+  // An episode ends at the next gate, not at the finish line a whole lap
+  // away. With a discount of 0.95 anything more than about twenty moves off
+  // is worth almost exactly as much as anything else, so a lap-long goal
+  // leaves the table flat and the car sits still rather than driving: every
+  // move looks as good as every other. Gates are a few moves apart, well
+  // inside that horizon, and a policy that always drives to the next gate
+  // goes round the track — which is the same thing, learned in pieces.
+  const gates = track.gates;
+  const lengths = [];
+  let episodes = 0;
+  let crashes = 0;
+  let arrivals = 0;
+  let wrongWay = 0;
+  let spent = 0;
+
+  // Every value starts at zero, which is better than anything the car can
+  // actually score, so an untried move always looks the most promising. That
+  // is what makes it explore. It also means the table has to remember which
+  // moves it has actually tried, or when the racing starts it would keep
+  // recommending the ones it knows nothing about.
+  const values = id => {
+    let row = table.get(id);
+    if (!row) {
+      row = { q: new Float32Array(9), tried: new Uint8Array(9) };
+      table.set(id, row);
+    }
+    return row;
+  };
+
+  const share = () => Math.min(1, episodes / Math.max(1, settings.episodes));
+  const epsilonNow = () =>
+    settings.epsilonFrom + (settings.epsilonTo - settings.epsilonFrom) * share();
+  const alphaNow = () =>
+    settings.alpha + ((settings.alphaTo ?? settings.alpha) - settings.alpha) * share();
+
+  function episode() {
+    const start = places[Math.floor(random() * places.length)];
+    let x = start[0];
+    let y = start[1];
+    let vx = Math.floor(random() * (2 * MAX_SPEED + 1)) - MAX_SPEED;
+    let vy = Math.floor(random() * (2 * MAX_SPEED + 1)) - MAX_SPEED;
+    const epsilon = epsilonNow();
+    const alpha = alphaNow();
+    let steps = 0;
+
+    while (steps < settings.episodeCap) {
+      steps += 1;
+      const row = values(key(x, y, vx, vy));
+      const allowed = [];
+      for (let index = 0; index < MOVES.length; index++) {
+        if (Math.abs(vx + MOVES[index].ax) > MAX_SPEED) continue;
+        if (Math.abs(vy + MOVES[index].ay) > MAX_SPEED) continue;
+        allowed.push(index);
+      }
+      const choice = random() < epsilon
+        ? allowed[Math.floor(random() * allowed.length)]
+        : bestOf(row.q, allowed);
+
+      const outcome = roll(track, gates, x, y, vx, vy, MOVES[choice]);
+      let reward = -1;
+      if (outcome.crashed) {
+        reward -= OFF_TRACK_COST;
+        crashes += 1;
+      }
+      if (settings.shaping) {
+        // Potential-based, so it changes how fast it learns and not what the
+        // best way round is.
+        const before = remaining.get([x, y].join()) ?? 0;
+        const after = outcome.home ? 0 : (remaining.get([outcome.x, outcome.y].join()) ?? before);
+        reward += before - settings.gamma * after;
+      }
+
+      if (outcome.backwards) reward -= OFF_TRACK_COST;
+
+      let target = reward;
+      if (!outcome.home && !outcome.backwards) {
+        const next = values(key(outcome.x, outcome.y, outcome.vx, outcome.vy));
+        let best = -Infinity;
+        for (let index = 0; index < 9; index++) {
+          if (Math.abs(outcome.vx + MOVES[index].ax) > MAX_SPEED) continue;
+          if (Math.abs(outcome.vy + MOVES[index].ay) > MAX_SPEED) continue;
+          if (next.q[index] > best) best = next.q[index];
+        }
+        target += settings.gamma * (best === -Infinity ? 0 : best);
+      }
+      row.q[choice] += alpha * (target - row.q[choice]);
+      row.tried[choice] = 1;
+
+      x = outcome.x;
+      y = outcome.y;
+      vx = outcome.vx;
+      vy = outcome.vy;
+      if (outcome.home) {
+        arrivals += 1;
+        break;
+      }
+      if (outcome.backwards) {
+        wrongWay += 1;
+        break;
+      }
+    }
+
+    episodes += 1;
+    lengths.push(steps);
+  }
+
+  return {
+    table,
+    key,
+    settings,
+    get stats() {
+      return {
+        episodes,
+        states: table.size,
+        crashes,
+        arrivals,
+        wrongWay,
+        seconds: Math.round(spent / 100) / 10,
+        perSecond: spent > 0 ? Math.round(episodes / (spent / 1000)) : 0,
+        epsilon: Math.round(epsilonNow() * 1000) / 1000,
+        alpha: Math.round(alphaNow() * 1000) / 1000,
+        rolling: rollingMean(lengths, 50),
+        lengths,
+      };
+    },
+    get done() {
+      return episodes >= settings.episodes;
+    },
+    /**
+     * Runs episodes for about this many milliseconds and hands control back.
+     * Training takes seconds, and seconds of a frozen page is indistinguishable
+     * from a broken one.
+     */
+    runFor(milliseconds) {
+      const until = now() + milliseconds;
+      const before = episodes;
+      do {
+        episode();
+      } while (now() < until && episodes < settings.episodes);
+      spent += milliseconds;
+      return episodes - before;
+    },
+  };
+}
+
+/** One move, by the same rules the game uses, without building a whole state. */
+function roll(track, gates, x, y, vx, vy, move) {
+  const nvx = vx + move.ax;
+  const nvy = vy + move.ay;
+  const from = [x, y];
+  const to = [x + nvx, y + nvy];
+  const hit = track.hit(from, to);
+
+  if (hit === null) {
+    let home = false;
+    let backwards = false;
+    for (const gate of gates) {
+      if (crossesGate(gate, from, to) !== null) home = true;
+      // Going back through a gate is how the whole thing could be cheated:
+      // reverse through one and come straight back for the reward, two moves
+      // instead of driving to the next. So it ends the attempt instead.
+      else if (crossesGate(gate, to, from) !== null) backwards = true;
+    }
+    return { x: to[0], y: to[1], vx: nvx, vy: nvy, crashed: false, home, backwards };
+  }
+
+  let landing = from;
+  for (const step of latticePointsAlong(from, [nvx, nvy])) {
+    if (step.t >= hit.t) break;
+    if (track.contains(step.point[0], step.point[1])) landing = step.point;
+  }
+  return {
+    x: landing[0], y: landing[1], vx: 0, vy: 0,
+    crashed: true, home: false, backwards: false,
+  };
+}
+
+function bestOf(row, allowed) {
+  let best = allowed[0];
+  let bestValue = -Infinity;
+  for (const index of allowed) {
+    if (row[index] > bestValue) {
+      bestValue = row[index];
+      best = index;
+    }
+  }
+  return best;
+}
+
+/** The average of the last so many episodes, which is the line on the chart. */
+export function rollingMean(lengths, window) {
+  if (lengths.length === 0) return 0;
+  const from = Math.max(0, lengths.length - window);
+  let total = 0;
+  for (let index = from; index < lengths.length; index++) total += lengths[index];
+  return Math.round(total / (lengths.length - from));
+}
+
+function distanceAlong(track, point) {
+  let best = 0;
+  let bestGap = Infinity;
+  for (const sample of track.samples) {
+    const gap = (sample.x - point[0]) ** 2 + (sample.y - point[1]) ** 2;
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = sample.s;
+    }
+  }
+  return best;
+}
+
+/**
+ * The move the learned table thinks best. Other cars are not in the table at
+ * all — it has never seen one — so when its favourite is blocked it takes the
+ * best of the moves it is actually allowed. That is an honest limit of the
+ * state it was given, and the interface says so.
+ */
+export function learnerMove(state, learned) {
+  const started = now();
+  const moves = legalMoves(state);
+  if (moves.length === 0) {
+    return { move: { ax: 0, ay: 0 }, stats: finish('learner', 0, started, { boxedIn: true }) };
+  }
+  const player = state.players[state.active];
+  const row = learned && learned.table.get(
+    learned.key(player.pos[0], player.pos[1], player.vel[0], player.vel[1]));
+  if (!row) {
+    // Somewhere it never visited while training: it has nothing to say, so the
+    // greedy rule drives instead, and the interface reports it.
+    const fallback = greedy(state);
+    return {
+      move: fallback.move,
+      stats: finish('learner', 9, started, { unseen: true, fellBack: true }),
+    };
+  }
+
+  let best = null;
+  let bestValue = -Infinity;
+  for (const move of moves) {
+    const index = MOVES.findIndex(one => one.ax === move.ax && one.ay === move.ay);
+    if (!row.tried[index]) continue;
+    if (row.q[index] > bestValue) {
+      bestValue = row.q[index];
+      best = move;
+    }
+  }
+  if (!best) {
+    const fallback = greedy(state);
+    return {
+      move: fallback.move,
+      stats: finish('learner', 9, started, { unseen: true, fellBack: true }),
+    };
+  }
+  const favourite = MOVES[bestOf(row.q, [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    .filter(index => row.tried[index]))];
+  const blocked = !moves.some(move => move.ax === favourite.ax && move.ay === favourite.ay);
+  return { move: best, stats: finish('learner', moves.length, started, { blocked }) };
 }

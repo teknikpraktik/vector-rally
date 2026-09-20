@@ -132,6 +132,79 @@ handing the planner a budget of five. Phone numbers are still to be measured.
 
 There is a mode on the track screen that races Greedy against Planner with
 nobody playing, for showing the difference on a projector.
+### The Learner
+
+A third driver learns instead of searching: tabular Q-learning, trained in the
+page while you watch. It keeps a value for every (point, velocity) it has been
+in and each of the nine moves, and nudges those values towards what actually
+happened — −1 a move, −25 for leaving the track, 0 for arriving.
+
+Every attempt starts **somewhere random**, any point on the track at any speed,
+rather than on the grid. Dropped on the line every time, a car moving at random
+would essentially never arrive anywhere and the curve would be a flat line
+along the top of the chart.
+
+**Nothing is saved.** Reload and the table is gone. The curve is the
+demonstration, and a table that already existed when the lesson began would
+take the demonstration away. The table also only knows the track it was taught,
+and it says so when asked to drive somewhere else.
+
+Training runs in a Web Worker so the page stays alive; where there is no worker
+it runs in twelve-millisecond slices between frames instead. Stop works
+immediately either way.
+
+Three things about it are not what the first sketch of this called for, and
+each is here because the first sketch did not work:
+
+- **What it aims at is the next gate, not the finish line.** A whole lap is
+  further off than the discount can see: at 0.95, anything beyond about twenty
+  moves is worth as much as anything else, so the table comes out flat and the
+  car sits still because every move looks the same. Measured: with a lap-long
+  goal it got round on 1 of 18 attempts. Aiming at the next gate — a few moves
+  off, well inside the horizon — and repeating, *is* a lap. That got 16 of 18.
+- **The learning rate falls away**, from 0.2 to 0.02 over the run. A rate that
+  stays high keeps knocking a nearly-settled table about, and the car drives
+  differently every time you train it.
+- **Going back through a gate ends the attempt.** Otherwise there is a cheat
+  worth finding: reverse through a gate and come straight back for the reward,
+  two moves instead of driving to the next one.
+
+All of the dials — learning rate, discount, how much it explores at each end,
+how many attempts, and potential-based shaping — are on the screen, so the
+failures above can be reproduced in front of a class by turning the discount
+back down to 0.95 with a lap-long goal.
+
+Measured on an AMD Ryzen 9 5900HX under Node 24, 150,000 attempts a track:
+
+| Track | Trained in | Attempts a second | States | Moves an attempt |
+|---|---|---|---|---|
+| Monza | 5.9 s | 25,500 | 90,000 | 16.3 → 8.2 |
+| Spa | 5.6 s | 26,700 | 87,000 | 17.8 → 8.3 |
+| Silverstone | 4.9 s | 30,700 | 90,100 | 21.5 → 7.8 |
+| Monaco | 5.2 s | 28,700 | 60,600 | 16.9 → 5.4 |
+| Suzuka | 5.0 s | 30,000 | 77,700 | 16.2 → 7.2 |
+| Interlagos | 4.5 s | 33,100 | 72,700 | 12.2 → 5.6 |
+
+**Phone numbers are still to be measured** — I have no phone to measure on.
+
+And then the point of the whole thing. One lap, one car alone, same machine:
+
+| Track | Greedy | Planner | Learner | Perfect |
+|---|---|---|---|---|
+| Monza | 82 moves, 16 off | 43, 0 | 89, 6 | 39 |
+| Spa | 57, 8 | 36, 0 | 93, 7 | 34 |
+| Silverstone | 77, 15 | 37, 0 | 73, 3 | 34 |
+| Monaco | 59, 11 | 42, 0 | 66, 4 | 39 |
+| Suzuka | 48, 7 | 34, 0 | 62, 5 | 34 |
+| Interlagos | 55, 11 | 32, 0 | 56, 5 | 30 |
+
+The Learner, after a hundred and fifty thousand attempts, loses to the Planner
+everywhere and to the Greedy driver in places. That is the honest result and
+the useful one: the track never changes and can be seen in full, so searching
+works out exactly what learning can only approximate. It is also not reliable —
+2 of 18 training runs produced a table that never got round at all, which is
+worth saying out loud in a lesson rather than re-rolling until it behaves.
+
 
 ## Running it locally
 

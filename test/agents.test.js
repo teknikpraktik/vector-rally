@@ -2,8 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { applyMove, createInitialState, isFinished, legalMoves, previewMove } from '../engine.js';
-import { AGENT_NAMES, KINDS, PLANNER_BUDGET, chooseMove, isAgent } from '../agents.js';
-import { trackIds } from '../tracks.js';
+import {
+  AGENT_NAMES, KINDS, LEARNER_DEFAULTS, PLANNER_BUDGET, chooseMove, createLearner,
+  isAgent, learningCurve, packTable, unpackTable,
+} from '../agents.js';
+import { getTrack, trackIds } from '../tracks.js';
+import { readFileSync } from 'node:fs';
 
 /** Drives one car round on its own and reports what that cost it. */
 function solo(trackId, kind, { budget = PLANNER_BUDGET, limit = 400 } = {}) {
@@ -134,12 +138,14 @@ test('the same race gives the same drive, and nothing is modified on the way', (
 });
 
 test('the drivers are named, and human is not one of them', () => {
-  assert.deepEqual(KINDS, ['human', 'greedy', 'planner']);
+  assert.deepEqual(KINDS, ['human', 'greedy', 'planner', 'learner']);
   assert.equal(isAgent('human'), false);
   assert.equal(isAgent('greedy'), true);
   assert.equal(isAgent('planner'), true);
   assert.equal(AGENT_NAMES.greedy, 'Greedy');
   assert.equal(AGENT_NAMES.planner, 'Planner');
+  assert.equal(AGENT_NAMES.learner, 'Learner');
+  assert.equal(isAgent('learner'), true);
 });
 
 test('Greedy and Planner can race each other, and the Planner wins',
@@ -158,3 +164,106 @@ test('Greedy and Planner can race each other, and the Planner wins',
       || planner.finishTurn < greedy.finishTurn, 'and got there first');
     assert.ok(greedy.crashes > 0, 'while the greedy one kept falling off');
   });
+
+// ---------------------------------------------------------------------------
+// The Learner
+// ---------------------------------------------------------------------------
+
+/** Trains one, quickly, for the tests that only need a table to exist. */
+function taught(trackId, episodes = 20000, extra = {}) {
+  const track = getTrack(trackId);
+  const learner = createLearner(track, { episodes, seed: 4, ...extra });
+  while (!learner.done) learner.runFor(50);
+  return { track, learner };
+}
+
+test('learning brings the number of moves an attempt takes down', { timeout: 120000 }, () => {
+  const { learner } = taught('interlagos', 40000);
+  const curve = learningCurve(learner.stats.lengths, 10);
+  const first = curve[0][1];
+  const last = curve[curve.length - 1][1];
+  assert.ok(last < first * 0.8,
+    `it started at ${first} moves an attempt and ended at ${last}, which is not learning`);
+  assert.ok(learner.stats.states > 1000, 'and it remembered a fair few states');
+  assert.ok(learner.stats.arrivals > 100, 'and actually arrived somewhere');
+});
+
+test('a table survives being handed between threads', { timeout: 120000 }, () => {
+  const { track, learner } = taught('suzuka');
+  const packed = packTable(learner);
+  assert.equal(packed.keys.length, learner.table.size);
+  const back = unpackTable(track, packed);
+
+  const state = createInitialState({
+    trackId: 'suzuka', seed: 2, players: [{ kind: 'learner' }],
+  });
+  assert.deepEqual(chooseMove(state, undefined, back).move,
+    chooseMove(state, undefined, learner).move,
+    'the unpacked table drives exactly as the original did');
+});
+
+test('a Learner with nothing to go on says so and drives anyway', () => {
+  const state = createInitialState({ trackId: 'monza', seed: 2, players: [{ kind: 'learner' }] });
+  const { move, stats } = chooseMove(state, undefined, null);
+  assert.equal(stats.kind, 'learner');
+  assert.equal(stats.fellBack, true, 'it fell back rather than sitting there');
+  assert.equal(previewMove(state, move).blocking, false);
+});
+
+test('a table learned on one track is no use on another', { timeout: 120000 }, () => {
+  const { learner } = taught('monaco');
+  const elsewhere = createInitialState({
+    trackId: 'spa', seed: 2, players: [{ kind: 'learner' }],
+  });
+  const { stats } = chooseMove(elsewhere, undefined, learner);
+  assert.equal(stats.unseen, true, 'it has never seen this place');
+});
+
+test('a taught Learner gets round, and loses to the Planner', { timeout: 300000 }, () => {
+  const trackId = 'interlagos';
+  const { learner } = taught(trackId, 150000);
+  const drive = kind => {
+    let state = createInitialState({ trackId, seed: 5, players: [{ kind }] });
+    let moves = 0;
+    while (!isFinished(state) && moves < 400) {
+      state = applyMove(state, chooseMove(state, undefined, learner).move);
+      moves += 1;
+    }
+    return { moves, player: state.players[0] };
+  };
+  const learned = drive('learner');
+  const planned = drive('planner');
+  assert.equal(learned.player.finished, true, 'the learner never got round');
+  assert.equal(planned.player.finished, true);
+  assert.ok(planned.moves < learned.moves,
+    `the planner took ${planned.moves} moves and the learner ${learned.moves} — `
+    + 'the learner is supposed to be the worse of the two');
+});
+
+test('every attempt starts somewhere else, or nothing would ever be learned', () => {
+  const track = getTrack('spa');
+  const learner = createLearner(track, { episodes: 400, seed: 8 });
+  learner.runFor(300);
+  // With exploring starts the table fills up all over the track rather than in
+  // a puddle around the starting line.
+  const spread = new Set();
+  for (const id of learner.table.keys()) spread.add(Math.floor(id / (11 * 11)));
+  assert.ok(spread.size > 100,
+    `only ${spread.size} places were ever visited, so the starts are not exploring`);
+});
+
+test('shaping changes how fast it learns, and is off unless asked for',
+  { timeout: 120000 }, () => {
+    assert.equal(LEARNER_DEFAULTS.shaping, false);
+    const plain = taught('interlagos', 20000).learner.stats.rolling;
+    const shaped = taught('interlagos', 20000, { shaping: true }).learner.stats.rolling;
+    assert.ok(plain > 0 && shaped > 0, 'both of them learned something');
+  });
+
+test('nothing about a learned table is written down anywhere', () => {
+  for (const file of ['../agents.js', '../engine.js', '../tracks.js', '../index.html']) {
+    const source = readFileSync(new URL(file, import.meta.url), 'utf8');
+    assert.equal(/localStorage|sessionStorage|indexedDB/i.test(source), false,
+      `${file} keeps something between sessions, and nothing here may`);
+  }
+});
