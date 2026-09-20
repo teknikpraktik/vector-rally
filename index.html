@@ -29,7 +29,6 @@
   --danger: #9d2f26;       /*  6.4:1 on paper */
   --good: #2c6246;         /*  6.6:1 on paper */
   --accent: #2f6f8f;       /*  5.1:1 on paper */
-  --pad: 10px;
   --radius: 10px;
   --safe-t: env(safe-area-inset-top, 0px);
   --safe-r: env(safe-area-inset-right, 0px);
@@ -360,50 +359,6 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
   max-width: 45%;
 }
 
-.pad {
-  right: calc(var(--safe-r) + 10px);
-  bottom: calc(var(--safe-b) + 10px);
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  background: rgba(251, 249, 243, 0.82);
-  border: 2px solid var(--ink);
-  border-radius: 14px;
-  padding: 6px;
-  backdrop-filter: blur(2px);
-}
-.pad button {
-  width: 56px;
-  height: 52px;
-  min-height: 44px;
-  padding: 2px;
-  display: grid;
-  place-items: center;
-  gap: 0;
-  line-height: 1.05;
-  box-shadow: none;
-  border-width: 2px;
-}
-.pad .arrow { font-size: 17px; }
-.pad .vel { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--ink-soft); }
-.pad button[aria-pressed="true"] { background: var(--ink); color: var(--paper-bright); }
-.pad button[aria-pressed="true"] .vel { color: var(--paper-shade); }
-.pad button.dead {
-  opacity: 0.4;
-  border-style: dashed;
-  text-decoration: line-through;
-  cursor: default;
-}
-.pad button.refused { animation: refused 0.3s; border-color: var(--danger); }
-@keyframes refused {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-4px); }
-  75% { transform: translateX(4px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .pad button.refused { animation: none; background: #f6e3e0; }
-}
-
 .banner {
   left: 50%;
   top: 10px;
@@ -465,7 +420,6 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
 }
 
 @media (max-width: 420px) {
-  .pad button { width: 50px; height: 48px; }
   .actions { max-width: 40%; }
 }
 </style>
@@ -535,9 +489,9 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
       <li>Each turn you change the velocity by −1, 0 or +1 in each direction — nine
         choices — and the car then travels in a straight line by the whole new
         velocity. Neither part of it may leave −5…5.</li>
-      <li><b>Work out where that puts you.</b> The game will not show you: adding the
-        velocity to the position is the part worth practising. The pad tells you what
-        the velocity becomes, and nothing else.</li>
+      <li>The nine points you could move to are marked on the track. Which one is
+        which is still yours to work out: nothing is drawn between the car and them,
+        and none of them is labelled.</li>
       <li>The whole line from where you are to where you land has to stay on the
         track. At speed 5 that line is five units long, and it can cut the corner out
         of a bend and back in again with both of its ends still on the track. That
@@ -561,9 +515,13 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
     <p><b>The edge of the track</b> is a curve that pays the squares no attention. It
       is drawn as a thin line exactly where the mathematics puts it, so what you see
       is what the game tests against.</p>
-    <p><b>Taking a turn:</b> press one of the nine buttons and let go to take that
-      move. Sliding off the button before letting go cancels it. Drag the track to
-      move around it, pinch or scroll to zoom.</p>
+    <p><b>Taking a turn:</b> press anywhere and drag. The nearest of the nine points
+      is picked up as you move, and the speed it would leave you with appears at the
+      top — after you have chosen, not before. Let go to go there, or drag back to
+      the car to think again. Crossed-out points cannot be taken at all.</p>
+    <p>Two fingers move the board about and pinch to zoom; the scroll wheel zooms.
+      While you are choosing, the board zooms in far enough that the nine points are
+      a thumb apart, and back out again once the move is made.</p>
     <p><b>Install it:</b> on Android, Chrome’s ⋮ menu → “Add to Home screen”. On iOS,
       the share button in Safari’s toolbar → scroll down → “Add to Home Screen”.
       Load the game once with a network connection and it works offline afterwards.</p>
@@ -676,8 +634,6 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
       <button class="quiet" id="end-race">End race</button>
     </div>
 
-    <div class="overlay pad" id="pad" role="group" aria-label="Choose a move"></div>
-
     <div class="results" id="results" hidden>
       <div class="card">
         <h2 id="results-title">Result</h2>
@@ -743,11 +699,12 @@ const ui = {
   pointers: new Map(),
   pinch: null,
   dragging: false,
-  padHeld: null,
   confirmingEnd: false,
   message: null,
   crash: null,
   waiting: false,
+  shake: 0,
+  pointing: null,
   agentStats: null,
   learner: null,
   training: null,
@@ -755,6 +712,11 @@ const ui = {
 
 /** How long to leave a computer driver’s move on the screen before the next. */
 const AGENT_PACE = 550;
+
+/** A clock that does not jump about if the machine changes its mind. */
+const now = () => (window.performance && window.performance.now
+  ? window.performance.now()
+  : Date.now());
 
 const canvas = $('#board');
 const ctx = canvas.getContext('2d');
@@ -1483,22 +1445,19 @@ function handOver() {
   if (!isAgent(ui.state.players[ui.state.active].kind)) return;
   window.setTimeout(playAgent, AGENT_PACE);
 }
-/** A move that cannot happen: say so, and make the button say so too. */
+/** A move that cannot happen: say so, and shake the board about it. */
 function refuse(reason) {
   flash(reason === 'car'
-    ? 'Another car is standing exactly on that line.'
+    ? 'Another car is standing exactly there.'
     : 'That would take the car over the speed limit.', true);
-  const button = ui.padHeld === null ? null
-    : $(`#pad [data-move="${ui.padHeld}"]`);
-  if (!button) return;
-  button.classList.remove('refused');
-  void button.offsetWidth;
-  button.classList.add('refused');
+  // A tap that does nothing at all reads as a broken app rather than as a
+  // rule, so the board twitches.
+  ui.shake = now() + 260;
+  draw();
 }
 
 function afterMove(message) {
   ui.selected = null;
-  ui.padHeld = null;
   ui.confirmingEnd = false;
   ui.message = message ? { text: message, bad: true } : null;
   draw();
@@ -1508,8 +1467,20 @@ function afterMove(message) {
 
 function undo() {
   if (!ui.state || ui.state.history.length === 0) return;
-  ui.state = undoMove(ui.state);
-  ui.selected = null;
+  // Undo replays the whole race a move short. A state pasted into the debug
+  // panel by hand may no longer agree with its own history, and then the
+  // replay will not run — which is worth saying rather than throwing.
+  let back;
+  try {
+    back = undoMove(ui.state);
+  } catch (error) {
+    flash(`Cannot undo: ${error.message}. This state and its history disagree.`, true);
+    return;
+  }
+  ui.state = back;
+  ui.pointing = null;
+  ui.crash = null;
+  ui.waiting = false;
   $('#results').hidden = true;
   hideBanner();
   draw();
@@ -1539,7 +1510,7 @@ function cameraCentre() {
   if (ui.camera.mode === 'follow') {
     const player = ui.state.players[ui.state.active];
     const car = player && !player.finished ? player : ui.state.players[0];
-    return [car.pos[0] + 0.5, car.pos[1] + 0.5];
+    return [car.pos[0], car.pos[1]];
   }
   if (ui.camera.mode === 'overview') {
     const { minX, maxX, minY, maxY } = track().bounds;
@@ -1603,6 +1574,13 @@ function draw() {
   ctx.fillStyle = '#f4f1e8';
   ctx.fillRect(0, 0, view.width, view.height);
 
+  // A refused tap shakes the board for a moment.
+  const left = ui.shake - now();
+  if (left > 0) {
+    ctx.translate(Math.sin(left / 22) * Math.min(6, left / 18), 0);
+    window.requestAnimationFrame(draw);
+  }
+
   drawSurface(board);
   drawPaper(size, ox, oy);
   drawFinish(board, size);
@@ -1610,6 +1588,7 @@ function draw() {
   drawDirection(board, size);
   for (const player of ui.state.players) drawTrace(player, size);
   drawCrash(size);
+  drawChoices(size);
   for (const player of ui.state.players) drawCar(player, size);
   ctx.restore();
 
@@ -1780,7 +1759,7 @@ function drawTrace(player, size) {
   ctx.lineJoin = 'round';
   ctx.beginPath();
   points.forEach(([x, y], index) => {
-    const [sx, sy] = toScreen(x + 0.5, y + 0.5);
+    const [sx, sy] = toScreen(x, y);
     if (index === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
   });
   ctx.stroke();
@@ -1788,15 +1767,86 @@ function drawTrace(player, size) {
   if (size < 10) return;
   ctx.fillStyle = fade(player.color, 0.65);
   for (const [x, y] of points.slice(0, -1)) {
-    const [sx, sy] = toScreen(x + 0.5, y + 0.5);
+    const [sx, sy] = toScreen(x, y);
     ctx.beginPath();
     ctx.arc(sx, sy, Math.max(1.2, size * 0.09), 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
+/**
+ * The nine points the car could move to, as small markers and nothing else:
+ * no line from the car, no landing marker, no numbers. Where you *can* end up
+ * is a fact about the rules; what any of them means is still the arithmetic,
+ * and that stays the player’s.
+ */
+function drawChoices(size) {
+  if (isFinished(ui.state) || ui.waiting) return;
+  const player = ui.state.players[ui.state.active];
+  if (isAgent(player.kind)) return;
+
+  for (const spot of choices()) {
+    const [sx, sy] = toScreen(spot.point[0], spot.point[1]);
+    const chosen = ui.pointing === spot.index;
+    const radius = Math.max(3, size * (chosen ? 0.3 : 0.17));
+
+    ctx.lineWidth = Math.max(1.4, size * (chosen ? 0.1 : 0.06));
+    ctx.strokeStyle = spot.blocked ? 'rgba(59, 59, 64, 0.35)' : '#3b3b40';
+    ctx.fillStyle = 'rgba(251, 249, 243, 0.9)';
+    ctx.beginPath();
+    ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+    if (!spot.blocked) ctx.fill();
+    ctx.stroke();
+
+    if (spot.blocked) {
+      const arm = radius * 0.78;
+      ctx.beginPath();
+      ctx.moveTo(sx - arm, sy - arm);
+      ctx.lineTo(sx + arm, sy + arm);
+      ctx.moveTo(sx + arm, sy - arm);
+      ctx.lineTo(sx - arm, sy + arm);
+      ctx.stroke();
+    } else if (chosen) {
+      ctx.fillStyle = '#26262a';
+      ctx.beginPath();
+      ctx.arc(sx, sy, radius * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+/** The nine, with where each one lands and whether it can be taken at all. */
+function choices() {
+  const player = ui.state.players[ui.state.active];
+  return MOVES.map((move, index) => {
+    const outcome = previewMove(ui.state, move);
+    return {
+      index,
+      move,
+      blocked: outcome.blocking,
+      reason: outcome.reason,
+      velocity: outcome.velocity,
+      point: [
+        player.pos[0] + player.vel[0] + move.ax,
+        player.pos[1] + player.vel[1] + move.ay,
+      ],
+    };
+  });
+}
+
+/** Whichever of the nine is nearest, however far away the finger landed. */
+function nearestChoice(world) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const spot of choices()) {
+    const gap = (spot.point[0] - world[0]) ** 2 + (spot.point[1] - world[1]) ** 2;
+    if (gap < bestGap) { bestGap = gap; best = spot; }
+  }
+  return best;
+}
+
 function drawCar(player, size) {
-  const [sx, sy] = toScreen(player.pos[0] + 0.5, player.pos[1] + 0.5);
+  const [sx, sy] = toScreen(player.pos[0], player.pos[1]);
   const radius = Math.max(4, size * 0.34);
   const active = !isFinished(ui.state) && ui.state.players[ui.state.active].id === player.id;
 
@@ -1864,7 +1914,10 @@ function drawHud() {
 
   $('#hud-progress').innerHTML = done ? '' : [
     `at <b>(${player.pos[0]}, ${player.pos[1]})</b>`,
-    `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`,
+    ui.pointing === null
+      ? `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`
+      : `speed <b>(${player.vel[0]}, ${player.vel[1]})</b> → `
+        + `<b>(${choices()[ui.pointing].velocity.join(', ')})</b>`,
     `checkpoints <b>${player.checkpoints.length}/${board.checkpointCount}</b>`,
     `crashes <b>${player.crashes}</b>`,
     `turn <b>${ui.state.turn + 1}</b>`,
@@ -1875,49 +1928,10 @@ function drawHud() {
   $('#undo').disabled = ui.state.history.length === 0;
   $('#end-race').textContent = ui.confirmingEnd ? 'Really end it?' : 'End race';
 
-  drawPad();
   updateBanner();
 }
 
 const ARROWS = ['↖', '↑', '↗', '←', '•', '→', '↙', '↓', '↘'];
-
-/**
- * The pad is built once and then only updated. Replacing the buttons while a
- * finger is on one of them loses the release: the element the touch started
- * on would no longer exist, and the move would never be taken.
- */
-function buildPad() {
-  $('#pad').innerHTML = MOVES.map((move, index) => `
-    <button data-move="${index}">
-      <span class="arrow">${ARROWS[index]}</span>
-      <span class="vel"></span>
-    </button>`).join('');
-}
-
-function drawPad() {
-  const done = isFinished(ui.state);
-  for (const [index, move] of MOVES.entries()) {
-    const button = $(`#pad [data-move="${index}"]`);
-    const label = button.querySelector('.vel');
-    if (done) {
-      button.className = 'dead';
-      button.setAttribute('aria-disabled', 'true');
-      label.textContent = '';
-      continue;
-    }
-    const outcome = previewMove(ui.state, move);
-    const [vx, vy] = outcome.velocity;
-    const chosen = ui.selected && ui.selected.ax === move.ax && ui.selected.ay === move.ay;
-    // Crossed out, but not disabled: a button that does nothing at all when
-    // it is pressed reads as a broken app rather than as a rule.
-    button.setAttribute('aria-disabled', String(outcome.blocking));
-    button.className = outcome.blocking ? 'dead' : '';
-    button.setAttribute('aria-pressed', String(Boolean(chosen)));
-    button.setAttribute('aria-label',
-      `speed ${vx}, ${vy}${outcome.blocking ? `, blocked by ${outcome.reason}` : ''}`);
-    label.textContent = `${vx}, ${vy}`;
-  }
-}
 
 /**
  * What the last computer driver did and what it cost. A planner that quietly
@@ -2045,44 +2059,29 @@ $('#end-race').addEventListener('click', () => {
   showResults();
 });
 
-// The pad: hold to preview, let go to take the move. Sliding a finger off the
-// button before letting go cancels it — which is why the button under the
-// pointer is looked up again on release rather than trusting the event target,
-// since a touch keeps sending its events to the button it started on.
-$('#pad').addEventListener('pointerdown', event => {
-  const button = event.target.closest('[data-move]');
-  if (!button || ui.waiting) return;
-  ui.padHeld = Number(button.dataset.move);
-  if (button.classList.contains('dead')) return;
-  select(MOVES[ui.padHeld]);
-});
-$('#pad').addEventListener('pointerup', event => {
-  if (ui.padHeld === null) return;
-  const under = document.elementFromPoint(event.clientX, event.clientY);
-  const button = under && under.closest('[data-move]');
-  if (button && Number(button.dataset.move) === ui.padHeld) {
-    if (button.classList.contains('dead')) refuse(previewMove(ui.state, MOVES[ui.padHeld]).reason);
-    else commit();
-  }
-  ui.padHeld = null;
-});
-$('#pad').addEventListener('pointercancel', () => { ui.padHeld = null; });
-$('#pad').addEventListener('pointerover', event => {
-  if (event.pointerType !== 'mouse') return;
-  const button = event.target.closest('[data-move]');
-  if (button) select(MOVES[Number(button.dataset.move)]);
-});
-
-// The track itself: touch one of the nine marked cells, or drag and pinch.
+/**
+ * Choosing a move: press anywhere, drag, let go.
+ *
+ * The whole board is shared out between the nine points, so the nearest one
+ * is picked however far away the finger actually landed — nine markers a
+ * single unit apart are a few pixels wide on a phone, and nobody should have
+ * to hit one. Dragging back to the car puts the move down again.
+ */
 canvas.addEventListener('pointerdown', event => {
-  canvas.setPointerCapture(event.pointerId);
+  // Keeping the pointer means a finger that slides off the canvas still
+  // reports where it went. Not every environment offers it.
+  if (canvas.setPointerCapture) canvas.setPointerCapture(event.pointerId);
   ui.pointers.set(event.pointerId, [event.clientX, event.clientY]);
   if (ui.pointers.size === 2) {
     const [a, b] = [...ui.pointers.values()];
     ui.pinch = { distance: Math.hypot(a[0] - b[0], a[1] - b[1]), scale: cellSize() };
+    ui.pointing = null;
+    draw();
     return;
   }
-  ui.dragging = true;
+  if (!choosing()) { ui.dragging = true; return; }
+  closeIn();
+  point(event);
 });
 
 canvas.addEventListener('pointermove', event => {
@@ -2107,22 +2106,102 @@ canvas.addEventListener('pointermove', event => {
       ui.camera.centre[1] - (event.clientY - previous[1]) / size,
     ];
     draw();
+    return;
   }
+  if (ui.pointers.size === 1 && choosing()) point(event);
 });
 
-function releasePointer(event) {
+canvas.addEventListener('pointerup', event => {
+  const wasPointing = ui.pointing;
+  const panned = ui.dragging;
   ui.pointers.delete(event.pointerId);
   if (ui.pointers.size < 2) ui.pinch = null;
-  if (ui.pointers.size === 0) ui.dragging = false;
-}
+  if (ui.pointers.size > 0) return;
+  ui.dragging = false;
+  if (panned || wasPointing === null || !choosing()) {
+    ui.pointing = null;
+    letOut();
+    draw();
+    return;
+  }
+  const spot = choices()[wasPointing];
+  ui.pointing = null;
+  if (spot.blocked) {
+    refuse(spot.reason);
+    return;
+  }
+  letOut();
+  take(spot.move);
+});
 
-canvas.addEventListener('pointerup', releasePointer);
 canvas.addEventListener('pointercancel', event => {
   ui.pointers.delete(event.pointerId);
   ui.pinch = null;
   ui.dragging = false;
+  ui.pointing = null;
+  letOut();
+  draw();
 });
 
+/** Is there a person whose turn it is to move? */
+function choosing() {
+  if (!ui.state || isFinished(ui.state) || ui.waiting) return false;
+  return !isAgent(ui.state.players[ui.state.active].kind);
+}
+
+/** Takes note of which of the nine the finger is nearest, or of none of them. */
+function point(event) {
+  const rect = canvas.getBoundingClientRect();
+  const size = cellSize();
+  const [ox, oy] = origin();
+  const world = [
+    (event.clientX - rect.left - ox) / size,
+    (event.clientY - rect.top - oy) / size,
+  ];
+  const player = ui.state.players[ui.state.active];
+  const standingStill = player.vel[0] === 0 && player.vel[1] === 0;
+  const backAtTheCar = Math.hypot(world[0] - player.pos[0], world[1] - player.pos[1]) < 0.55;
+  // Dragging back to the car puts the move down — except when the car is
+  // stopped, where the car itself is one of the nine and staying put is a
+  // move like any other.
+  const before = ui.pointing;
+  ui.pointing = backAtTheCar && !standingStill ? null : nearestChoice(world).index;
+  if (ui.pointing !== before) draw();
+}
+
+// --- the board leans in while a move is being chosen ----------------------
+
+/** Two points a unit apart have to be at least this far apart on the screen. */
+const THUMB = 44;
+
+function closeIn() {
+  if (cellSize() >= THUMB) return;
+  ui.camera.leaning = ui.camera.leaning || { from: ui.camera.scale, mode: ui.camera.mode };
+  ui.camera.mode = 'follow';
+  zoomTo(THUMB);
+}
+
+function letOut() {
+  const leaning = ui.camera.leaning;
+  if (!leaning) return;
+  ui.camera.leaning = null;
+  ui.camera.mode = leaning.mode;
+  zoomTo(leaning.from);
+}
+
+/** Eases the zoom rather than jumping it, or the track slides out from under you. */
+function zoomTo(scale) {
+  const from = ui.camera.scale;
+  const started = now();
+  const step = () => {
+    const share = Math.min(1, (now() - started) / 220);
+    const eased = share < 0.5 ? 2 * share * share : 1 - ((-2 * share + 2) ** 2) / 2;
+    ui.camera.scale = from + (scale - from) * eased;
+    draw();
+    if (share < 1) window.requestAnimationFrame(step);
+  };
+  window.requestAnimationFrame(step);
+}
 canvas.addEventListener('wheel', event => {
   event.preventDefault();
   goFree();
@@ -2209,7 +2288,6 @@ $('#check-updates').addEventListener('click', async () => {
   }
 });
 
-buildPad();
 buildPlayers();
 // The front page is what opens, so its picture is drawn once the rest is up.
 window.setTimeout(runDemo, 0);
