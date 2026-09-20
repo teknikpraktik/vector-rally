@@ -578,6 +578,7 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
       <span>Reward getting closer as well (shaping). Off by default — turn it on and
         watch what it does to the curve.</span>
     </label>
+    <p class="hint" id="training-estimate">Measuring how fast this device is…</p>
     <div class="choice-row" style="margin-top: 14px">
       <button class="primary" id="train">Train</button>
       <button class="quiet" id="stop-training" hidden>Stop</button>
@@ -708,6 +709,7 @@ const ui = {
   message: null,
   crash: null,
   waiting: false,
+  deviceRate: 0,
   shake: 0,
   pointing: null,
   showNine: false,
@@ -1170,12 +1172,15 @@ function buildTraining() {
     if (!dial) return;
     ui.settings[dial.dataset.dial] = Number(dial.value);
     $(`[data-shows="${dial.dataset.dial}"]`).textContent = dial.value;
+    showEstimate();
   });
   $('#shaping').addEventListener('change', () => {
     ui.settings.shaping = $('#shaping').checked;
   });
   drawCurve();
   showFigures();
+  // Measuring blocks for a tenth of a second, so let the screen appear first.
+  window.setTimeout(showEstimate, 0);
 }
 
 /** The track the carousel is showing, which is the one being taught. */
@@ -1183,6 +1188,32 @@ function chosenTrack() {
   const chosen = ui.setup.cards[ui.setup.showing] || 'monza';
   if (chosen !== 'anywhere') return getTrack(chosen);
   return generateTrack(ui.setup.anywhereSeed).track;
+}
+
+/**
+ * How many attempts a second this device manages, measured on this device.
+ *
+ * There is no other honest way to answer "how long will this take on a
+ * phone": the only phone figure worth anything is the one the phone gives.
+ * A tenth of a second of real training is enough to say.
+ */
+function speedOfThisDevice() {
+  if (ui.deviceRate) return ui.deviceRate;
+  const sample = createLearner(chosenTrack(), { ...ui.settings, episodes: 1e9 });
+  const started = performance.now();
+  sample.runFor(120);
+  const spent = performance.now() - started;
+  ui.deviceRate = Math.max(1, Math.round(sample.stats.episodes / (spent / 1000)));
+  return ui.deviceRate;
+}
+
+function showEstimate() {
+  const rate = speedOfThisDevice();
+  const seconds = Math.round(ui.settings.episodes / rate);
+  const slow = seconds > 90;
+  $('#training-estimate').innerHTML = slow
+    ? `<b>About ${seconds} seconds</b> for ${ui.settings.episodes.toLocaleString()} attempts on this device, at about ${rate.toLocaleString()} a second. That is a long while to watch: fewer attempts will still bring the curve down, and will drive worse.`
+    : `About <b>${seconds} seconds</b> for ${ui.settings.episodes.toLocaleString()} attempts on this device, at about ${rate.toLocaleString()} a second.`;
 }
 
 function startTraining() {
@@ -1291,6 +1322,9 @@ function showFigures() {
     ['moves each, lately', stats.rolling],
     ['attempts a second', stats.perSecond.toLocaleString()],
     ['seconds', stats.seconds],
+    ['seconds to go', stats.perSecond
+      ? Math.max(0, Math.round((ui.settings.episodes - stats.episodes) / stats.perSecond))
+      : '…'],
     ['states remembered', stats.states.toLocaleString()],
     ['exploring', stats.epsilon],
     ['learning rate', stats.alpha],
@@ -1361,6 +1395,7 @@ function showScreen(name) {
   }
   if (name === 'landing') window.setTimeout(runDemo, 0); else stopDemo();
   if (name === 'tracks') {
+    ui.deviceRate = 0;
     buildTracks();
     window.requestAnimationFrame(() => scrollToCard(0));
   }
@@ -1869,6 +1904,22 @@ function choices() {
 }
 
 /**
+ * Below this many pixels to the unit, half a unit is a few pixels and no
+ * thumb can pick out one crossing from the next. The board is then a map to
+ * look at rather than something to play on, and it says so.
+ *
+ * The radius a press has to land within is half a unit and stays half a unit.
+ * Widening it as the board shrinks would put the snapping back in by the
+ * back door, and with the nine hidden the snap would be doing the one sum
+ * the game exists to teach.
+ */
+const MOVE_ZOOM = 44;
+
+function closeEnoughToPlay() {
+  return cellSize() >= MOVE_ZOOM;
+}
+
+/**
  * The crossing nearest the finger, or nothing if the finger is not really on
  * one. Half a unit, and not the nearest of the nine: snapping to the nearest
  * *possible* move would quietly correct a miscalculation into a legal move
@@ -2004,8 +2055,10 @@ function updateBanner() {
   let bad = false;
 
   if (trapped()) {
-    text = 'Nowhere legal to go — the car crashes where it stands. Press space.';
+    text = 'Nowhere legal to go — the car crashes where it stands.';
     bad = true;
+  } else if (player && !closeEnoughToPlay()) {
+    text = 'Zoom in to move.';
   } else if (ui.message) {
     text = ui.message.text;
     bad = ui.message.bad;
@@ -2169,7 +2222,15 @@ canvas.addEventListener('pointerup', event => {
   ui.pointing = null;
   // Letting go anywhere that is not on a crossing is how a move is put down
   // again after second thoughts.
-  if (panned || where === null || !choosing()) {
+  if (panned || !choosing()) {
+    draw();
+    return;
+  }
+  if (!closeEnoughToPlay()) {
+    flash('Zoom in to move.');
+    return;
+  }
+  if (where === null) {
     draw();
     return;
   }
@@ -2196,10 +2257,10 @@ function point(event) {
   const size = cellSize();
   const [ox, oy] = origin();
   const before = ui.pointing;
-  ui.pointing = nearestCrossing([
+  ui.pointing = closeEnoughToPlay() ? nearestCrossing([
     (event.clientX - rect.left - ox) / size,
     (event.clientY - rect.top - oy) / size,
-  ]);
+  ]) : null;
   if (String(before) !== String(ui.pointing)) draw();
 }
 

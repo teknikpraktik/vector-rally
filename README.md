@@ -34,10 +34,16 @@ out of the arithmetic instead of being programmed in.
   the track, and it is caught.
 - Go off and the car does not get put back on the track. It comes to rest just
   outside it, where it crossed the edge, at a standstill — and from out there
-  the only move it may make is one that puts it back on, so an excursion costs
-  two turns and all the speed. Because nobody can check a curved edge by eye,
-  the game shows the exact point where the line crossed and the piece of edge
-  it crossed before moving the car.
+  the only thing it may do is drive back on or stand still, so an excursion
+  costs two turns and all the speed. Because nobody can check a curved edge by
+  eye, the game shows the exact point where the line crossed and the piece of
+  edge it crossed before moving the car.
+- **Standing still is always allowed from a standstill**, on the track or off
+  it. That one line is what keeps a race from ever locking up: a crash always
+  leaves a car stopped, and a stopped car can always stay stopped, so there is
+  always a move next turn. The proof is written beside the crash rule in
+  `engine.js`, because the rule that a car off the track may only drive back on
+  quietly broke it once already.
 - Cars are points. Two of them may not stand on the same point, and a move
   whose line passes exactly through another car is impossible. Passing close is
   not — with point-sized cars there is room.
@@ -59,7 +65,10 @@ the wrong crossing and nothing happens, and the game says which kind of wrong it
 was: *Not reachable from your velocity* means the sum was wrong, *Occupied* or
 *Speed limit* means the sum was right and the rules say no. A race opens close
 enough in that a crossing is a thumb across, and the board never zooms itself
-after that.
+after that — but zoom out past 44 pixels to the unit and the board becomes a
+map: presses stop choosing moves and it says *Zoom in to move*. The radius a
+press has to land within stays half a unit however far out you go, because
+widening it would put the snapping back in by the back door.
 
 A car stands on a corner of the paper, where two lines cross, not in the middle
 of a square.
@@ -214,7 +223,18 @@ racing line was. At 150,000 it got round on 10 of 18 runs; at 400,000, on 14.
 | Suzuka | 5.0 s | 30,000 | 77,700 | 16.2 → 7.2 |
 | Interlagos | 4.5 s | 33,100 | 72,700 | 12.2 → 5.6 |
 
-**Phone numbers are still to be measured** — I have no phone to measure on.
+**There are still no phone figures here, and I cannot produce any**: there is
+no phone on this machine to run it on, and a number worked out from a laptop
+by multiplying is a guess dressed up as a measurement.
+
+What the training screen does instead is measure the device it is actually on.
+Before training it runs a tenth of a second of real attempts and says *about N
+seconds for 400,000 attempts on this device, at about R a second*; over ninety
+seconds it says so plainly and suggests fewer attempts, with the warning that
+the driving will be worse. While training runs it shows the seconds left. So
+the phone answers the question itself, in front of the class, and the honest
+figure for your phone is the one it prints — please write it into the table
+below.
 
 And then the point of the whole thing. One lap, one car alone, same machine:
 

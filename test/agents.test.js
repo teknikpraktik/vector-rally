@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { applyMove, createInitialState, isFinished, legalMoves, previewMove } from '../engine.js';
 import {
   AGENT_NAMES, KINDS, LEARNER_DEFAULTS, PLANNER_BUDGET, chooseMove, createLearner,
-  isAgent, learningCurve, packTable, unpackTable,
+  isAgent, learningCurve, packTable, stateKeyFor, unpackTable,
 } from '../agents.js';
 import { getTrack, trackIds } from '../tracks.js';
 import { readFileSync } from 'node:fs';
@@ -284,4 +284,27 @@ test('nothing about a learned table is written down anywhere', () => {
     assert.equal(/localStorage|sessionStorage|indexedDB/i.test(source), false,
       `${file} keeps something between sessions, and nothing here may`);
   }
+});
+
+test('a state is numbered by its track as well as its place', () => {
+  // Two tracks of a similar size used to number the same states the same way,
+  // so a table taught on one answered confidently about the other. The track is
+  // part of the number now, and the interface check is a second line of defence
+  // rather than the only one.
+  const seen = new Map();
+  for (const trackId of trackIds()) {
+    const key = stateKeyFor(getTrack(trackId));
+    for (let x = 10; x < 40; x += 3) {
+      for (let y = 10; y < 30; y += 3) {
+        for (const [vx, vy] of [[0, 0], [3, -2], [5, 5], [-5, 1]]) {
+          const id = key(x, y, vx, vy);
+          assert.ok(Number.isSafeInteger(id), `${trackId}: key ${id} is out of range`);
+          assert.ok(!seen.has(id) || seen.get(id) === trackId,
+            `${trackId} and ${seen.get(id)} both number a state ${id}`);
+          seen.set(id, trackId);
+        }
+      }
+    }
+  }
+  assert.ok(seen.size > 1000);
 });

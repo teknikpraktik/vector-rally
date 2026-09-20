@@ -357,18 +357,43 @@ const OFF_TRACK_COST = 25;
  * How a (point, velocity) is turned into one number. It lives here on its
  * own because a table trained in a worker has to be read back on the other
  * side, and both sides have to number the states the same way.
+ *
+ * The track is part of the number. Without it, two tracks of a similar size
+ * number the same states the same way, and a table taught on one of them
+ * answers confidently about the other — the interface can refuse to hand over
+ * the wrong table, but then the safety is a gate in front of the mistake
+ * rather than the absence of the mistake.
  */
 export function stateKeyFor(track) {
   const originX = Math.floor(track.bounds.minX) - 2;
   const originY = Math.floor(track.bounds.minY) - 2;
   const width = Math.ceil(track.bounds.maxX - originX) + 4;
+  const mark = fingerprint(track.id);
   return (x, y, vx, vy) =>
-    (((y - originY) * width + (x - originX)) * 11 + vx + MAX_SPEED) * 11 + vy + MAX_SPEED;
+    ((((y - originY) * width + (x - originX)) * 11 + vx + MAX_SPEED) * 11 + vy + MAX_SPEED)
+      * 1000003 + mark;
 }
 
-/** A trained table, flattened so it can be handed between threads. */
+/** A number for a track name, small enough to leave the rest of the key room. */
+function fingerprint(id) {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index++) {
+    hash ^= id.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash) % 1000003;
+}
+
+/**
+ * A trained table, flattened so it can be handed between threads.
+ *
+ * The keys go in a Float64Array rather than an Int32Array: now that the track
+ * is part of a state number they run into the hundreds of billions, which a
+ * 32-bit slot silently wraps round — the table arrived looking fine and drove
+ * differently.
+ */
 export function packTable(learned) {
-  const keys = new Int32Array(learned.table.size);
+  const keys = new Float64Array(learned.table.size);
   const q = new Float32Array(learned.table.size * 9);
   const tried = new Uint8Array(learned.table.size * 9);
   let at = 0;
@@ -697,8 +722,10 @@ export function learnerMove(state, learned) {
   const row = learned && learned.table.get(
     learned.key(player.pos[0], player.pos[1], player.vel[0], player.vel[1]));
   if (!row) {
-    // Somewhere it never visited while training: it has nothing to say, so the
-    // greedy rule drives instead, and the interface reports it.
+    // Somewhere it never visited while training — or, since the track is part
+    // of how a state is numbered, a table taught somewhere else entirely. It
+    // has nothing to say either way, so the greedy rule drives instead and
+    // the interface reports it.
     const fallback = greedy(state);
     return {
       move: fallback.move,

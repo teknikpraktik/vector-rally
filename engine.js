@@ -247,6 +247,16 @@ function preview(state, move) {
     if (onSegment(from, target, other.pos)) return blocked('car', { target });
   }
 
+  // Staying exactly where you are is always allowed. The line is a point, so
+  // there is nothing for it to cross and nobody else can be standing on it —
+  // and this is what keeps the game from ever locking up. See applyMove.
+  if (velocity[0] === 0 && velocity[1] === 0) {
+    return {
+      move, velocity, target, landing: [...target],
+      reason: null, blocking: false, crashes: false, hit: null, gates: [],
+    };
+  }
+
   // A car that is already off the track is not driving, it is rejoining.
   // The only thing it may do is get back on: anywhere else is more field.
   if (!pointInside(track, from)) {
@@ -352,9 +362,24 @@ export function applyMove(state, move) {
 
   // Boxed in with nowhere legal to go: the car crashes where it stands,
   // whichever move was asked for — there is no move left that could be asked
-  // for instead. It cannot lock the race up either: at velocity (0, 0) the
-  // move (0, 0) keeps the car on its own point, whose line is empty and which
-  // no other car can be standing on.
+  // for instead.
+  //
+  // WHY THIS CANNOT LOCK THE RACE UP, and please keep it that way:
+  //
+  //   1. A crash always leaves the car at velocity (0, 0).
+  //   2. From velocity (0, 0) the move (0, 0) is always allowed. Its line is
+  //      a single point, so there is nothing for it to cross; and that point
+  //      is the car’s own, which no other car can be standing on.
+  //   3. So after a crash there is always at least one move next turn, and
+  //      the rule cannot be reached twice in a row with nothing in between.
+  //
+  // Step 2 is the fragile one. It was briefly untrue: when a car that left
+  // the track was first made to come to rest outside it, the rule "a car off
+  // the track may only drive back on" ruled out (0, 0) as well, and a car
+  // whose only way back lay diagonally through a corner of the edge had no
+  // move at all. Staying put is now allowed from every standstill, on the
+  // track or off it, and test 15 checks every resting place every track can
+  // produce. Any future change to the off-track rule has to keep step 2.
   const trapped = legalMoves(state).length === 0;
 
   if (!trapped) {

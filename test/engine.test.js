@@ -214,14 +214,17 @@ test('9. a car that is off the track may only drive back onto it', () => {
   assert.equal(pointInside(WIDE, state.players[0].pos), false);
 
   const moves = legalMoves(state);
-  assert.ok(moves.length > 0, 'there is a way back');
+  assert.ok(moves.length > 1, 'there is a way back');
   assert.ok(moves.length < 9, 'but not every direction is one');
   for (const move of moves) {
     const outcome = previewMove(state, move);
-    assert.equal(pointInside(WIDE, outcome.target), true,
-      `${JSON.stringify(move)} leads to ${outcome.target}, which is not back on the track`);
+    const standingStill = move.ax === 0 && move.ay === 0;
+    assert.ok(standingStill || pointInside(WIDE, outcome.target),
+      `${JSON.stringify(move)} leads to ${outcome.target}, which is neither back on the `
+      + 'track nor staying put');
   }
-  const back = applyMove(state, moves[0]);
+  const driving = moves.find(move => move.ax !== 0 || move.ay !== 0);
+  const back = applyMove(state, driving);
   assert.equal(pointInside(WIDE, back.players[0].pos), true, 'and it took it');
   assert.equal(back.players[0].crashes, 1, 'rejoining is not another crash');
 });
@@ -304,6 +307,108 @@ test('14. the speed limit cannot be exceeded', () => {
     const velocity = state.players[0].vel[0] + move.ax;
     if (Math.abs(velocity) > MAX_SPEED) assert.equal(hasMove(moves, move.ax, move.ay), false);
   }
+});
+
+/**
+ * Every place the off-track rule can leave a car. They are countable, so this
+ * counts them rather than sampling: any point off the track with somewhere on
+ * the track next door to it.
+ */
+function restingPlaces(track) {
+  const places = [];
+  for (let y = Math.floor(track.bounds.minY) - 1; y <= Math.ceil(track.bounds.maxY) + 1; y++) {
+    for (let x = Math.floor(track.bounds.minX) - 1; x <= Math.ceil(track.bounds.maxX) + 1; x++) {
+      if (pointInside(track, [x, y])) continue;
+      const neighbours = [];
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if ((dx || dy) && pointInside(track, [x + dx, y + dy])) neighbours.push([dx, dy]);
+        }
+      }
+      if (neighbours.length > 0) places.push({ point: [x, y], neighbours });
+    }
+  }
+  return places;
+}
+
+function parkedAt(track, point, others = []) {
+  const base = createInitialState({
+    trackId: track.id,
+    seed: 1,
+    players: Array.from({ length: others.length + 1 }, () => ({})),
+  });
+  return {
+    ...base,
+    players: base.players.map((player, index) => (index === 0
+      ? { ...player, pos: [...point], vel: [0, 0] }
+      : { ...player, pos: [...others[index - 1]], vel: [0, 0] })),
+  };
+}
+
+test('15. a car has a move from every place the rules can leave it, on every track',
+  { timeout: 120000 }, () => {
+    let checked = 0;
+    let onlyDiagonal = 0;
+    for (const track of [WIDE, SMALL, OPEN, ...listTracks()]) {
+      for (const { point, neighbours } of restingPlaces(track)) {
+        checked += 1;
+        if (neighbours.every(([dx, dy]) => dx !== 0 && dy !== 0)) onlyDiagonal += 1;
+        const moves = legalMoves(parkedAt(track, point));
+        assert.ok(moves.length > 0,
+          `${track.id}: a car resting at ${point} has nowhere to go at all`);
+      }
+    }
+    assert.ok(checked > 500, `only ${checked} resting places were found to check`);
+    // The case the guarantee was lost on: the only way back is a diagonal one,
+    // and a line to a diagonal neighbour can pass through a corner of the edge,
+    // which the rules refuse.
+    assert.ok(onlyDiagonal > 0,
+      'no resting place had nothing but diagonal neighbours, so this proves less than it should');
+  });
+
+test('15b. a car hemmed in by three others can still stand still', { timeout: 120000 }, () => {
+  let tried = 0;
+  for (const track of listTracks()) {
+    for (const { point } of restingPlaces(track)) {
+      // Where the car could drive back on to, from a standstill.
+      const alone = parkedAt(track, point);
+      const ways = legalMoves(alone)
+        .filter(move => move.ax !== 0 || move.ay !== 0)
+        .map(move => [point[0] + move.ax, point[1] + move.ay]);
+      if (ways.length === 0 || ways.length > 3) continue;
+
+      // Park a car on every one of them, which is what three opponents can do.
+      const state = parkedAt(track, point, ways);
+      const moves = legalMoves(state);
+      assert.ok(moves.length > 0,
+        `${track.id}: a car at ${point} with every way back taken has no move at all`);
+      assert.ok(moves.some(move => move.ax === 0 && move.ay === 0),
+        'and the move it has is to stand still');
+
+      // And the race carries on: it is a move like any other.
+      const after = applyMove(state, { ax: 0, ay: 0 });
+      assert.deepEqual(after.players[0].pos, point);
+      assert.equal(after.active, 1, 'the turn passes on');
+      tried += 1;
+      if (tried >= 40) return;
+    }
+  }
+  assert.ok(tried > 0, 'no resting place had few enough ways back to hem in');
+});
+
+test('15c. standing still is allowed from a standstill, on the track or off it', () => {
+  const onTrack = place(race(WIDE), 0, { pos: [30, 8], vel: [0, 0] });
+  assert.equal(previewMove(onTrack, { ax: 0, ay: 0 }).blocking, false);
+  assert.deepEqual(applyMove(onTrack, { ax: 0, ay: 0 }).players[0].pos, [30, 8]);
+
+  const off = applyMove(place(race(WIDE), 0, { pos: [30, 10], vel: [0, -5] }), { ax: 0, ay: 0 });
+  const resting = off.players[0].pos;
+  assert.equal(pointInside(WIDE, resting), false, 'it is off the track');
+  assert.equal(previewMove(off, { ax: 0, ay: 0 }).blocking, false, 'and it may stay put');
+  const waited = applyMove(off, { ax: 0, ay: 0 });
+  assert.deepEqual(waited.players[0].pos, resting, 'and it does stay put');
+  assert.deepEqual(waited.players[0].vel, [0, 0]);
+  assert.equal(waited.players[0].crashes, 1, 'waiting is not another crash');
 });
 
 test('every car starts on the finish line, at a standstill', () => {
