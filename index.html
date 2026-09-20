@@ -489,9 +489,10 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
       <li>Each turn you change the velocity by −1, 0 or +1 in each direction — nine
         choices — and the car then travels in a straight line by the whole new
         velocity. Neither part of it may leave −5…5.</li>
-      <li>The nine points you could move to are marked on the track. Which one is
-        which is still yours to work out: nothing is drawn between the car and them,
-        and none of them is labelled.</li>
+      <li><b>Work out where that puts you.</b> Nothing is marked on the track: adding
+        the velocity to the position is the whole exercise, and it cannot be the
+        exercise if the answers are on the screen to pick between. There is a switch
+        on the race screen for showing the nine while the game is being explained.</li>
       <li>The whole line from where you are to where you land has to stay on the
         track. At speed 5 that line is five units long, and it can cut the corner out
         of a bend and back in again with both of its ends still on the track. That
@@ -515,13 +516,16 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
     <p><b>The edge of the track</b> is a curve that pays the squares no attention. It
       is drawn as a thin line exactly where the mathematics puts it, so what you see
       is what the game tests against.</p>
-    <p><b>Taking a turn:</b> press anywhere and drag. The nearest of the nine points
-      is picked up as you move, and the speed it would leave you with appears at the
-      top — after you have chosen, not before. Let go to go there, or drag back to
-      the car to think again. Crossed-out points cannot be taken at all.</p>
-    <p>Two fingers move the board about and pinch to zoom; the scroll wheel zooms.
-      While you are choosing, the board zooms in far enough that the nine points are
-      a thumb apart, and back out again once the move is made.</p>
+    <p><b>Taking a turn:</b> work out the crossing you are going to, then press it.
+      Press and drag and the crossing under your finger is ringed, with the speed it
+      would leave you with at the top — after you have chosen, not before. Let go on
+      it to go there, or let go away from any crossing to think again.</p>
+    <p>There is no snapping to the nearest possible move. Press the wrong crossing and
+      nothing happens, and the game tells you which kind of wrong it was: <i>Not
+      reachable from your velocity</i> means the sum was wrong, while <i>Occupied</i>
+      or <i>Speed limit</i> means the sum was right and the rules say no.</p>
+    <p>Two fingers move the board about and pinch to zoom; the scroll wheel zooms;
+      Overview shows the whole track. The board never zooms itself.</p>
     <p><b>Install it:</b> on Android, Chrome’s ⋮ menu → “Add to Home screen”. On iOS,
       the share button in Safari’s toolbar → scroll down → “Add to Home Screen”.
       Load the game once with a network connection and it works offline afterwards.</p>
@@ -631,6 +635,7 @@ button.big { width: 100%; font-size: 1.05em; min-height: 56px; }
     <div class="overlay actions">
       <button class="quiet" id="undo" title="Undo the last move">Undo</button>
       <button class="quiet" id="overview" title="Zoom out to the whole track">Overview</button>
+      <button class="quiet" id="show-nine" aria-pressed="false">Show the nine</button>
       <button class="quiet" id="end-race">End race</button>
     </div>
 
@@ -705,6 +710,7 @@ const ui = {
   waiting: false,
   shake: 0,
   pointing: null,
+  showNine: false,
   agentStats: null,
   learner: null,
   training: null,
@@ -982,7 +988,7 @@ function startRace(cast) {
   ui.selected = null;
   ui.crash = null;
   ui.waiting = false;
-  ui.camera = { scale: 26, centre: [0, 0], mode: 'follow' };
+  ui.camera = { scale: 46, centre: [0, 0], mode: 'follow' };
   ui.confirmingEnd = false;
   ui.agentStats = null;
   showScreen('race');
@@ -1447,9 +1453,10 @@ function handOver() {
 }
 /** A move that cannot happen: say so, and shake the board about it. */
 function refuse(reason) {
-  flash(reason === 'car'
-    ? 'Another car is standing exactly there.'
-    : 'That would take the car over the speed limit.', true);
+  // Three words, and each one a different problem: the point is taken, the
+  // speed is too high, or the car is still in the field.
+  flash({ car: 'Occupied.', 'speed limit': 'Speed limit.',
+    rejoin: 'Off the track — drive back onto it.' }[reason] || 'Not possible.', true);
   // A tap that does nothing at all reads as a broken app rather than as a
   // rule, so the board twitches.
   ui.shake = now() + 260;
@@ -1589,6 +1596,7 @@ function draw() {
   for (const player of ui.state.players) drawTrace(player, size);
   drawCrash(size);
   drawChoices(size);
+  drawPointing(size);
   for (const player of ui.state.players) drawCar(player, size);
   ctx.restore();
 
@@ -1775,12 +1783,15 @@ function drawTrace(player, size) {
 }
 
 /**
- * The nine points the car could move to, as small markers and nothing else:
- * no line from the car, no landing marker, no numbers. Where you *can* end up
- * is a fact about the rules; what any of them means is still the arithmetic,
- * and that stays the player’s.
+ * The nine points a car could move to are **not** drawn. Working out where
+ * the car lands is the whole exercise, and it cannot be the exercise if the
+ * answers are on the screen to choose between.
+ *
+ * There is a switch for showing them, off unless somebody turns it on, for
+ * the ten minutes at the start when the game is being explained.
  */
 function drawChoices(size) {
+  if (!ui.showNine) return;
   if (isFinished(ui.state) || ui.waiting) return;
   const player = ui.state.players[ui.state.active];
   if (isAgent(player.kind)) return;
@@ -1815,6 +1826,29 @@ function drawChoices(size) {
   }
 }
 
+/**
+ * A ring on the crossing the finger is over. This is not the same thing as
+ * drawing the nine: it says where you are pointing, not where you could go.
+ */
+function drawPointing(size) {
+  if (!ui.pointing) return;
+  const [sx, sy] = toScreen(ui.pointing[0], ui.pointing[1]);
+  ctx.strokeStyle = reachable(ui.pointing) ? '#26262a' : 'rgba(59, 59, 64, 0.4)';
+  ctx.lineWidth = Math.max(1.5, size * 0.08);
+  ctx.beginPath();
+  ctx.arc(sx, sy, Math.max(5, size * 0.28), 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+/** The move that would take the car to this crossing, if any of the nine does. */
+function reachable(point) {
+  const player = ui.state.players[ui.state.active];
+  const ax = point[0] - player.pos[0] - player.vel[0];
+  const ay = point[1] - player.pos[1] - player.vel[1];
+  if (Math.abs(ax) > 1 || Math.abs(ay) > 1) return null;
+  return { ax, ay };
+}
+
 /** The nine, with where each one lands and whether it can be taken at all. */
 function choices() {
   const player = ui.state.players[ui.state.active];
@@ -1834,17 +1868,18 @@ function choices() {
   });
 }
 
-/** Whichever of the nine is nearest, however far away the finger landed. */
-function nearestChoice(world) {
-  let best = null;
-  let bestGap = Infinity;
-  for (const spot of choices()) {
-    const gap = (spot.point[0] - world[0]) ** 2 + (spot.point[1] - world[1]) ** 2;
-    if (gap < bestGap) { bestGap = gap; best = spot; }
-  }
-  return best;
+/**
+ * The crossing nearest the finger, or nothing if the finger is not really on
+ * one. Half a unit, and not the nearest of the nine: snapping to the nearest
+ * *possible* move would quietly correct a miscalculation into a legal move
+ * the player never meant, and the one sum the game exists to teach would be
+ * done for them without their noticing.
+ */
+function nearestCrossing(world) {
+  const point = [Math.round(world[0]), Math.round(world[1])];
+  const away = Math.hypot(world[0] - point[0], world[1] - point[1]);
+  return away <= 0.5 ? point : null;
 }
-
 function drawCar(player, size) {
   const [sx, sy] = toScreen(player.pos[0], player.pos[1]);
   const radius = Math.max(4, size * 0.34);
@@ -1900,6 +1935,18 @@ function fade(color, alpha) {
 // The parts of the interface that are ordinary HTML
 // ---------------------------------------------------------------------------
 
+/**
+ * The speed it is doing, and — only while a finger is down on a crossing it
+ * could actually reach — the speed that move would leave it with. After the
+ * choice, never before it.
+ */
+function speedLine(player) {
+  const now = `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`;
+  const move = ui.pointing && reachable(ui.pointing);
+  if (!move) return now;
+  return `${now} → <b>(${player.vel[0] + move.ax}, ${player.vel[1] + move.ay})</b>`;
+}
+
 function drawHud() {
   const board = track();
   const player = ui.state.players[ui.state.active];
@@ -1914,10 +1961,7 @@ function drawHud() {
 
   $('#hud-progress').innerHTML = done ? '' : [
     `at <b>(${player.pos[0]}, ${player.pos[1]})</b>`,
-    ui.pointing === null
-      ? `speed <b>(${player.vel[0]}, ${player.vel[1]})</b>`
-      : `speed <b>(${player.vel[0]}, ${player.vel[1]})</b> → `
-        + `<b>(${choices()[ui.pointing].velocity.join(', ')})</b>`,
+    speedLine(player),
     `checkpoints <b>${player.checkpoints.length}/${board.checkpointCount}</b>`,
     `crashes <b>${player.crashes}</b>`,
     `turn <b>${ui.state.turn + 1}</b>`,
@@ -2047,6 +2091,11 @@ $('#again').addEventListener('click', () => {
 $('#undo').addEventListener('click', undo);
 $('#results-undo').addEventListener('click', undo);
 $('#overview').addEventListener('click', toggleOverview);
+$('#show-nine').addEventListener('click', () => {
+  ui.showNine = !ui.showNine;
+  $('#show-nine').setAttribute('aria-pressed', String(ui.showNine));
+  draw();
+});
 $('#end-race').addEventListener('click', () => {
   if (!ui.confirmingEnd) {
     ui.confirmingEnd = true;
@@ -2080,7 +2129,6 @@ canvas.addEventListener('pointerdown', event => {
     return;
   }
   if (!choosing()) { ui.dragging = true; return; }
-  closeIn();
   point(event);
 });
 
@@ -2112,26 +2160,20 @@ canvas.addEventListener('pointermove', event => {
 });
 
 canvas.addEventListener('pointerup', event => {
-  const wasPointing = ui.pointing;
+  const where = ui.pointing;
   const panned = ui.dragging;
   ui.pointers.delete(event.pointerId);
   if (ui.pointers.size < 2) ui.pinch = null;
   if (ui.pointers.size > 0) return;
   ui.dragging = false;
-  if (panned || wasPointing === null || !choosing()) {
-    ui.pointing = null;
-    letOut();
+  ui.pointing = null;
+  // Letting go anywhere that is not on a crossing is how a move is put down
+  // again after second thoughts.
+  if (panned || where === null || !choosing()) {
     draw();
     return;
   }
-  const spot = choices()[wasPointing];
-  ui.pointing = null;
-  if (spot.blocked) {
-    refuse(spot.reason);
-    return;
-  }
-  letOut();
-  take(spot.move);
+  takeCrossing(where);
 });
 
 canvas.addEventListener('pointercancel', event => {
@@ -2139,7 +2181,6 @@ canvas.addEventListener('pointercancel', event => {
   ui.pinch = null;
   ui.dragging = false;
   ui.pointing = null;
-  letOut();
   draw();
 });
 
@@ -2149,58 +2190,37 @@ function choosing() {
   return !isAgent(ui.state.players[ui.state.active].kind);
 }
 
-/** Takes note of which of the nine the finger is nearest, or of none of them. */
+/** Takes note of the crossing under the finger, if it is on one. */
 function point(event) {
   const rect = canvas.getBoundingClientRect();
   const size = cellSize();
   const [ox, oy] = origin();
-  const world = [
+  const before = ui.pointing;
+  ui.pointing = nearestCrossing([
     (event.clientX - rect.left - ox) / size,
     (event.clientY - rect.top - oy) / size,
-  ];
-  const player = ui.state.players[ui.state.active];
-  const standingStill = player.vel[0] === 0 && player.vel[1] === 0;
-  const backAtTheCar = Math.hypot(world[0] - player.pos[0], world[1] - player.pos[1]) < 0.55;
-  // Dragging back to the car puts the move down — except when the car is
-  // stopped, where the car itself is one of the nine and staying put is a
-  // move like any other.
-  const before = ui.pointing;
-  ui.pointing = backAtTheCar && !standingStill ? null : nearestChoice(world).index;
-  if (ui.pointing !== before) draw();
+  ]);
+  if (String(before) !== String(ui.pointing)) draw();
 }
 
-// --- the board leans in while a move is being chosen ----------------------
-
-/** Two points a unit apart have to be at least this far apart on the screen. */
-const THUMB = 44;
-
-function closeIn() {
-  if (cellSize() >= THUMB) return;
-  ui.camera.leaning = ui.camera.leaning || { from: ui.camera.scale, mode: ui.camera.mode };
-  ui.camera.mode = 'follow';
-  zoomTo(THUMB);
-}
-
-function letOut() {
-  const leaning = ui.camera.leaning;
-  if (!leaning) return;
-  ui.camera.leaning = null;
-  ui.camera.mode = leaning.mode;
-  zoomTo(leaning.from);
-}
-
-/** Eases the zoom rather than jumping it, or the track slides out from under you. */
-function zoomTo(scale) {
-  const from = ui.camera.scale;
-  const started = now();
-  const step = () => {
-    const share = Math.min(1, (now() - started) / 220);
-    const eased = share < 0.5 ? 2 * share * share : 1 - ((-2 * share + 2) ** 2) / 2;
-    ui.camera.scale = from + (scale - from) * eased;
-    draw();
-    if (share < 1) window.requestAnimationFrame(step);
-  };
-  window.requestAnimationFrame(step);
+/**
+ * What happens when the finger comes up on a crossing. There are three
+ * different answers and they have to be told apart: the move happens, or the
+ * sum was wrong, or the sum was right and the rules say no. Knowing which is
+ * exactly what the player is here to learn.
+ */
+function takeCrossing(where) {
+  const move = reachable(where);
+  if (!move) {
+    flash('Not reachable from your velocity.', true);
+    return;
+  }
+  const outcome = previewMove(ui.state, move);
+  if (outcome.blocking) {
+    refuse(outcome.reason);
+    return;
+  }
+  take(move);
 }
 canvas.addEventListener('wheel', event => {
   event.preventDefault();

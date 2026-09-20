@@ -23,9 +23,10 @@ out of the arithmetic instead of being programmed in.
   a square. Its position and its velocity are both pairs of whole numbers.
 - Each turn you change `vx` and `vy` by −1, 0 or +1 each: nine possible moves.
   The car then travels in a straight line to position plus the new velocity.
-- The nine points you could move to are marked on the track. Which one is which
-  is still yours to work out: nothing is drawn between the car and them, none of
-  them is labelled, and there is no preview of where a move leads.
+- **Nothing is marked on the track.** Adding the velocity to the position is the
+  whole exercise, and it cannot be the exercise if the answers are drawn on the
+  screen to pick between. There is a switch on the race screen for showing the
+  nine while the game is being explained, off unless somebody turns it on.
 - Neither part of the velocity may leave −5…5.
 - The whole line from where you are to where you land has to stay on the track.
   At speed 5 that line is five units long and can cut the corner out of a bend
@@ -46,14 +47,22 @@ out of the arithmetic instead of being programmed in.
   having passed every hidden checkpoint in order on the way round.
 
 Every car starts on the finish line, side by side, at a standstill. 1–4 players
-take turns on the same device. Mouse and touch only: press anywhere and drag —
-the nearest of the nine points is picked up as you go, the speed it would leave
-you with appears at the top, and letting go takes the move. Drag back to the car
-to think again.
+take turns on the same device. Mouse and touch only: work out the crossing you
+are going to and press it. The crossing under your finger is ringed as you drag,
+with the speed that move would leave you with; let go on it to go, or away from
+any crossing to think again.
 
-The board leans in while you are choosing, far enough that the nine points are a
-thumb apart, and back out once the move is made. A car stands on a corner of the
-paper, where two lines cross, not in the middle of a square.
+**There is no snapping to the nearest possible move.** Snapping would quietly
+correct a miscalculation into a legal move the player never meant, and the one
+sum the game exists to teach would be done for them without their noticing. Press
+the wrong crossing and nothing happens, and the game says which kind of wrong it
+was: *Not reachable from your velocity* means the sum was wrong, *Occupied* or
+*Speed limit* means the sum was right and the rules say no. A race opens close
+enough in that a crossing is a thumb across, and the board never zooms itself
+after that.
+
+A car stands on a corner of the paper, where two lines cross, not in the middle
+of a square.
 
 Starting a race is two screens: how many are playing, then which track — a
 carousel you swipe through, one card at a time, each with the track drawn from
