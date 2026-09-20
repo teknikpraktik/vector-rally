@@ -6,16 +6,22 @@
  * randomness goes through a seeded generator whose seed is part of the state,
  * so a race is fully described by its track, its seed and its move history.
  *
- * A car has a position and a velocity, both in whole grid cells. On its turn a
+ * A car stands on a corner of the squared paper: its position is a pair of
+ * whole numbers, a point where the lines cross, not a square. On its turn a
  * player changes each component of the velocity by -1, 0 or +1, and the car
- * moves by the new velocity. Everything the car passes over on the way there
- * counts: walls, other cars, checkpoints and the finish line.
+ * travels in a straight line to position plus new velocity.
+ *
+ * The track is an area with a curved edge, so the question "did that move stay
+ * on the track" is asked of the whole line, not of its far end. At speed 5 the
+ * line is five units long and can cut the corner out of a bend and back in
+ * again with both its ends still on the track. Testing only where the car
+ * lands would miss exactly that.
  */
 
-import { getTrack } from './tracks.js';
+import { EPSILON, getTrack } from './tracks.js';
 
-/** Bumped only if the shape of a saved state changes. */
-export const SCHEMA = 1;
+/** Bumped when the shape or the meaning of a saved state changes. */
+export const SCHEMA = 2;
 
 /** Neither velocity component may leave this range. */
 export const MAX_SPEED = 5;
@@ -30,6 +36,7 @@ export const MOVES = Object.freeze([
 /** Colour and shape both, because colour alone is no use to a colour-blind pupil. */
 export const PLAYER_COLORS = Object.freeze(['#2f6f8f', '#a1503f', '#4a7a44', '#7a5b9b']);
 export const PLAYER_SYMBOLS = Object.freeze(['circle', 'square', 'triangle', 'diamond']);
+
 const MAX_PLAYERS = 4;
 
 /**
@@ -51,51 +58,84 @@ export function randomInt(random, bound) {
   return Math.floor(random() * bound);
 }
 
-/**
- * The ordered list of cells a car passes through on its way from one cell to
- * another, both ends included.
- *
- * Two neighbouring cells in the list differ by exactly 1 in exactly one
- * coordinate: the path is 4-connected. That is the whole point. An ordinary
- * Bresenham line takes diagonal steps, and a diagonal step slips between two
- * wall cells that touch only at their corners without entering either of them,
- * so a one-cell-thick diagonal wall leaks. A 4-connected path cannot cross a
- * line of cells without standing on one of them.
- */
-export function pathCells(from, to) {
-  const [x0, y0] = requireCell(from, 'from');
-  const [x1, y1] = requireCell(to, 'to');
-  const stepX = Math.sign(x1 - x0);
-  const stepY = Math.sign(y1 - y0);
-  const spanX = Math.abs(x1 - x0);
-  const spanY = Math.abs(y1 - y0);
+// ---------------------------------------------------------------------------
+// Geometry, as the rules need it
+// ---------------------------------------------------------------------------
 
-  const cells = [[x0, y0]];
-  let x = x0;
-  let y = y0;
-  let takenX = 0;
-  let takenY = 0;
-  while (takenX < spanX || takenY < spanY) {
-    // Whichever axis is furthest behind where the true line is goes next.
-    const stepAlongX = takenY >= spanY
-      || (takenX < spanX && (1 + 2 * takenX) * spanY < (1 + 2 * takenY) * spanX);
-    if (stepAlongX) {
-      x += stepX;
-      takenX += 1;
-    } else {
-      y += stepY;
-      takenY += 1;
-    }
-    cells.push([x, y]);
-  }
-  return cells;
+/** Is this point on the track? The edge itself counts as off. */
+export function pointInside(track, point) {
+  return track.contains(point[0], point[1]);
 }
 
 /**
- * A fresh race. Every car starts on the finish line, and a race is one lap.
- * The seed has to be supplied by the caller: the engine never
- * invents randomness of its own, because a race must be reproducible from its
- * state alone.
+ * Is the whole straight line from one point to the other on the track?
+ *
+ * Both ends being on the track is not enough, which is the entire reason this
+ * function exists: a line can leave the area between its ends and come back.
+ */
+export function segmentInside(track, from, to) {
+  if (!pointInside(track, from) || !pointInside(track, to)) return false;
+  return track.hit(from, to) === null;
+}
+
+/**
+ * The whole-number points along a move, in order, starting where the car is.
+ * These are the only places a car can be put down, which matters when a move
+ * ends off the track and the car has to be left at the last good one.
+ */
+export function latticePointsAlong(from, velocity) {
+  const steps = gcd(Math.abs(velocity[0]), Math.abs(velocity[1]));
+  const points = [{ point: [from[0], from[1]], t: 0 }];
+  for (let step = 1; step <= steps; step++) {
+    points.push({
+      point: [from[0] + (velocity[0] * step) / steps, from[1] + (velocity[1] * step) / steps],
+      t: step / steps,
+    });
+  }
+  return points;
+}
+
+function gcd(a, b) {
+  while (b !== 0) [a, b] = [b, a % b];
+  return a;
+}
+
+/**
+ * Where a move crosses the gates, in the order it crosses them.
+ *
+ * One move at speed 5 can pass two gates, and taking them out of order would
+ * let a car collect the second checkpoint and skip the first — the same
+ * mistake as jumping a wall, wearing a different hat.
+ */
+export function gateCrossings(track, from, to, limit = 1) {
+  const found = [];
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  for (const gate of track.gates) {
+    const gx = gate.b[0] - gate.a[0];
+    const gy = gate.b[1] - gate.a[1];
+    const denominator = dx * gy - dy * gx;
+    if (Math.abs(denominator) <= EPSILON) continue;
+    const t = ((gate.a[0] - from[0]) * gy - (gate.a[1] - from[1]) * gx) / denominator;
+    const u = ((gate.a[0] - from[0]) * dy - (gate.a[1] - from[1]) * dx) / denominator;
+    if (t <= EPSILON || t > limit + EPSILON) continue;
+    if (u < -EPSILON || u > 1 + EPSILON) continue;
+    // Only the way the gate faces counts, which is what stops a car rolling
+    // back and forth over the line collecting laps.
+    if (dx * gate.dir[0] + dy * gate.dir[1] <= 0) continue;
+    found.push({ number: gate.number, t });
+  }
+  return found.sort((one, other) => one.t - other.t);
+}
+
+// ---------------------------------------------------------------------------
+// Starting a race
+// ---------------------------------------------------------------------------
+
+/**
+ * A fresh race. Every car starts on the finish line and a race is one lap.
+ * The seed has to be supplied by the caller: the engine never invents
+ * randomness of its own, because a race must be reproducible from its state.
  */
 export function createInitialState({ trackId, players, laps = 1, seed, appVersion } = {}) {
   const track = getTrack(trackId);
@@ -103,8 +143,8 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
     throw new Error(`A race needs 1 to ${MAX_PLAYERS} players`);
   }
   if (players.length > track.starts.length) {
-    throw new Error(`Track ${track.id} has ${track.starts.length} starting cells, `
-      + `not enough for ${players.length} players`);
+    throw new Error(`Track ${track.id} has ${track.starts.length} places on the line, `
+      + `not enough for ${players.length} cars`);
   }
   if (!Number.isInteger(laps) || laps < 1 || laps > 10) {
     throw new Error('laps must be a whole number from 1 to 10');
@@ -113,6 +153,7 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
     throw new Error('seed must be a whole number: every race is reproducible from its seed');
   }
 
+  const places = spreadAcross(track.starts, players.length);
   return {
     schema: SCHEMA,
     appVersion: appVersion ?? currentAppVersion(),
@@ -128,7 +169,7 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
       kind: nonEmpty(player.kind) ? player.kind : 'human',
       color: nonEmpty(player.color) ? player.color : PLAYER_COLORS[index],
       symbol: nonEmpty(player.symbol) ? player.symbol : PLAYER_SYMBOLS[index],
-      pos: [...track.starts[index]],
+      pos: [...places[index]],
       vel: [0, 0],
       trace: [],
       checkpoints: [],
@@ -141,7 +182,18 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
   };
 }
 
-/** True once nobody is driving any more, whether the race ran out or was stopped. */
+/** Spreads the cars evenly across the places on the line. */
+function spreadAcross(places, count) {
+  if (count === 1) return [places[Math.floor(places.length / 2)]];
+  return Array.from({ length: count }, (unused, index) =>
+    places[Math.round((index * (places.length - 1)) / (count - 1))]);
+}
+
+// ---------------------------------------------------------------------------
+// Taking a turn
+// ---------------------------------------------------------------------------
+
+/** True once nobody is driving any more, whether the lap ran out or was stopped. */
 export function isFinished(state) {
   return state.status !== 'racing';
 }
@@ -155,19 +207,17 @@ export function activePlayer(state) {
  * The moves the active player may choose from — never more than nine, and
  * sometimes none at all.
  *
- * A move is unavailable if it would break the speed limit, or if another car
- * stands anywhere along the line the car would travel. Driving into a wall is
- * *not* unavailable: it is allowed, and it costs the player the turn.
+ * A move is unavailable only when it cannot happen at all: over the speed
+ * limit, or straight through another car. Driving off the track is *not*
+ * unavailable. It is allowed, and it costs the player the turn — which is the
+ * whole reason there is anything to work out.
  */
 export function legalMoves(state) {
   if (isFinished(state)) return [];
   return MOVES.filter(move => !preview(state, move).blocking);
 }
 
-/**
- * What would happen if the active player made this move. The UI draws its
- * preview from this, and the agents in agents.js choose with it.
- */
+/** What would happen if the active player made this move. */
 export function previewMove(state, move) {
   if (isFinished(state)) throw new Error('The race is over');
   return preview(state, normalizeMove(move));
@@ -177,73 +227,79 @@ function preview(state, move) {
   const track = getTrack(state.trackId);
   const player = state.players[state.active];
   const velocity = [player.vel[0] + move.ax, player.vel[1] + move.ay];
+  const blocked = (reason, extra = {}) => ({
+    move,
+    velocity,
+    target: null,
+    landing: [...player.pos],
+    reason,
+    blocking: true,
+    crashes: false,
+    hit: null,
+    gates: [],
+    ...extra,
+  });
 
   if (Math.abs(velocity[0]) > MAX_SPEED || Math.abs(velocity[1]) > MAX_SPEED) {
+    return blocked('speed limit');
+  }
+
+  const from = player.pos;
+  const target = [from[0] + velocity[0], from[1] + velocity[1]];
+
+  // Cars are points, and two of them may not share one. Because every position
+  // is a whole number this is exact arithmetic — no rounding decides it.
+  for (const other of state.players) {
+    if (other.id === player.id || other.finished) continue;
+    if (onSegment(from, target, other.pos)) return blocked('car', { target });
+  }
+
+  const hit = track.hit(from, target);
+  const limit = hit === null ? 1 : hit.t;
+  const gates = gateCrossings(track, from, target, limit);
+
+  if (hit === null) {
     return {
-      move, velocity, target: null, cells: [], reachedIndex: -1,
-      landing: [...player.pos], reason: 'speed limit', blocking: true, crashes: true,
+      move, velocity, target, landing: [...target],
+      reason: null, blocking: false, crashes: false, hit: null, gates,
     };
   }
 
-  const target = [player.pos[0] + velocity[0], player.pos[1] + velocity[1]];
-  const cells = pathCells(player.pos, target);
-  const taken = takenCells(state, track, player.id);
-
-  let stoppedAt = null;
-  let reason = null;
-  for (let index = 1; index < cells.length; index++) {
-    const [x, y] = cells[index];
-    if (!track.isDrivable(x, y)) {
-      stoppedAt = index;
-      reason = track.isWall(x, y) ? 'wall' : 'off track';
-      break;
-    }
-    if (taken.has(key(x, y))) {
-      stoppedAt = index;
-      reason = 'car';
-      break;
-    }
-  }
-
-  if (stoppedAt === null) {
-    return {
-      move, velocity, target, cells, reachedIndex: cells.length - 1,
-      landing: [...target], reason: null, blocking: false, crashes: false,
-    };
-  }
-
-  // The car stops before whatever blocked it, backing up along its own path
-  // past any cell it cannot stand on. Its own cell always qualifies, so this
-  // search always finds somewhere to put the car.
-  let landingIndex = stoppedAt;
-  while (landingIndex > 0) {
-    const [x, y] = cells[landingIndex];
-    if (track.isDrivable(x, y) && !taken.has(key(x, y))) break;
-    landingIndex -= 1;
+  // Off the track. The car is left on the last whole-number point it reached
+  // before the edge, backing up past any point another car is standing on. Its
+  // own point always qualifies, so this always finds somewhere.
+  const taken = new Set(state.players
+    .filter(other => other.id !== player.id && !other.finished)
+    .map(other => `${other.pos[0]},${other.pos[1]}`));
+  let landing = [...from];
+  for (const step of latticePointsAlong(from, velocity)) {
+    if (step.t >= hit.t - EPSILON) break;
+    if (!pointInside(track, step.point)) continue;
+    if (taken.has(`${step.point[0]},${step.point[1]}`)) continue;
+    landing = step.point;
   }
 
   return {
-    move,
-    velocity,
-    target,
-    cells,
-    reachedIndex: stoppedAt - 1,
-    landing: [...cells[landingIndex]],
-    reason,
-    blocking: reason === 'car',
-    crashes: true,
+    move, velocity, target, landing,
+    reason: 'off track', blocking: false, crashes: true, hit, gates,
   };
+}
+
+/** Does this point lie exactly on the line from one end to the other? */
+function onSegment(from, to, point) {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  if (dx * (point[1] - from[1]) - dy * (point[0] - from[0]) !== 0) return false;
+  return point[0] >= Math.min(from[0], to[0]) && point[0] <= Math.max(from[0], to[0])
+    && point[1] >= Math.min(from[1], to[1]) && point[1] <= Math.max(from[1], to[1]);
 }
 
 /**
  * Applies a move and returns the new state. The state passed in is never
  * modified.
  *
- * The move is resolved by physics rather than by permission: a car that runs
- * into a wall, off the track or into another car stops where it can, loses its
- * speed and ends its turn. Only a move that cannot exist at all — one that
- * breaks the speed limit — is refused outright. Use legalMoves to decide what
- * to offer a player; use this to carry a move out.
+ * Use legalMoves to decide what to offer a player; use this to carry a move
+ * out. A move that cannot exist at all is refused here too.
  */
 export function applyMove(state, move) {
   if (isFinished(state)) throw new Error('The race is over');
@@ -252,42 +308,41 @@ export function applyMove(state, move) {
   const player = state.players[state.active];
   const outcome = preview(state, chosen);
 
-  if (outcome.reason === 'speed limit') {
-    throw new Error(`That move would break the speed limit of ${MAX_SPEED}`);
-  }
-
-  // Boxed in with nowhere legal to go: the car crashes where it stands. The
-  // consequence is the same as driving off the track, and it cannot lock the
-  // race up — at velocity (0, 0) the move (0, 0) keeps the car on its own
-  // cell, whose path is empty and which no other car can be standing on.
+  // Boxed in with nowhere legal to go: the car crashes where it stands,
+  // whichever move was asked for — there is no move left that could be asked
+  // for instead. It cannot lock the race up either: at velocity (0, 0) the
+  // move (0, 0) keeps the car on its own point, whose line is empty and which
+  // no other car can be standing on.
   const trapped = legalMoves(state).length === 0;
 
-  // Everything the car drove over, in the order it drove over it.
+  if (!trapped) {
+    if (outcome.reason === 'speed limit') {
+      throw new Error(`That move would break the speed limit of ${MAX_SPEED}`);
+    }
+    if (outcome.reason === 'car') {
+      throw new Error('Another car is standing in the way of that move');
+    }
+  }
+
   let checkpoints = player.checkpoints;
   let lap = player.lap;
   let finished = false;
-  const reachedIndex = trapped ? 0 : outcome.reachedIndex;
-  for (let index = 1; index <= reachedIndex; index++) {
-    const [x, y] = outcome.cells[index];
-    const checkpoint = track.checkpointAt(x, y);
-    if (checkpoint !== 0 && checkpoint === checkpoints.length + 1) {
-      checkpoints = [...checkpoints, checkpoint];
-    }
-    const crossing = track.isFinish(x, y)
-      && dot(outcome.velocity, track.finishDir) > 0
-      && checkpoints.length === track.checkpointCount;
-    if (crossing && !finished) {
-      lap += 1;
-      checkpoints = [];
-      if (lap >= state.laps) finished = true;
+  if (!trapped) {
+    for (const gate of outcome.gates) {
+      if (gate.number === checkpoints.length + 1) {
+        checkpoints = [...checkpoints, gate.number];
+      } else if (gate.number === 0 && checkpoints.length === track.checkpointCount && !finished) {
+        lap += 1;
+        checkpoints = [];
+        if (lap >= state.laps) finished = true;
+      }
     }
   }
 
-  const crashed = trapped || outcome.reason !== null;
-  const landing = trapped ? [...player.pos] : outcome.landing;
+  const crashed = trapped || outcome.crashes;
   const updated = {
     ...player,
-    pos: crashed ? landing : [...outcome.target],
+    pos: trapped ? [...player.pos] : [...outcome.landing],
     vel: crashed ? [0, 0] : outcome.velocity,
     trace: [...player.trace, [...player.pos]],
     checkpoints,
@@ -349,21 +404,14 @@ export function undoMove(state) {
   return replayHistory(state, state.history.slice(0, -1));
 }
 
-/** The checkpoint this player is looking for, or null when the finish line is next. */
-export function nextCheckpoint(state, player) {
+/** The gate this player is looking for next: a checkpoint, or the finish line. */
+export function nextGate(state, player) {
   const track = getTrack(state.trackId);
-  const next = player.checkpoints.length + 1;
-  return next > track.checkpointCount ? null : next;
+  const number = player.checkpoints.length + 1;
+  return track.gates[number > track.checkpointCount ? 0 : number];
 }
 
-/** The cells a player is heading for: the next checkpoint, or the finish line. */
-export function targetCells(state, player) {
-  const track = getTrack(state.trackId);
-  const next = nextCheckpoint(state, player);
-  return next === null ? track.finishCells : track.checkpointCells.get(next);
-}
-
-/** Players in race order: finishers first, then whoever has come furthest. */
+/** Players in race order: whoever is home first, then whoever has come furthest. */
 export function standings(state) {
   const track = getTrack(state.trackId);
   return [...state.players].sort((a, b) => {
@@ -375,6 +423,10 @@ export function standings(state) {
       || a.id - b.id;
   }).map((player, place) => ({ place: place + 1, player, of: track.checkpointCount }));
 }
+
+// ---------------------------------------------------------------------------
+// Saving and loading
+// ---------------------------------------------------------------------------
 
 /** The state as text, for the debug panel. */
 export function stateToJSON(state) {
@@ -401,7 +453,7 @@ export function stateFromJSON(text) {
     throw new Error('State has no players');
   }
   state.players.forEach((player, index) => {
-    if (!isCell(player.pos) || !isCell(player.vel)) {
+    if (!isPoint(player.pos) || !isPoint(player.vel)) {
       throw new Error(`Player ${index} has no position or velocity`);
     }
     if (!Array.isArray(player.trace) || !Array.isArray(player.checkpoints)) {
@@ -426,16 +478,6 @@ function nextPlayer(state, players) {
   return { active: state.active, turn: state.turn, status: 'finished' };
 }
 
-/** The cells other cars are standing on. Cars that have finished are gone. */
-function takenCells(state, track, exceptId) {
-  const taken = new Map();
-  for (const player of state.players) {
-    if (player.id === exceptId || player.finished) continue;
-    taken.set(key(player.pos[0], player.pos[1]), player.id);
-  }
-  return taken;
-}
-
 function normalizeMove(move) {
   if (!move || typeof move !== 'object') throw new TypeError('A move is { ax, ay }');
   const { ax, ay } = move;
@@ -447,21 +489,8 @@ function normalizeMove(move) {
   return { ax, ay };
 }
 
-function requireCell(cell, what) {
-  if (!isCell(cell)) throw new TypeError(`${what} must be [x, y] with whole numbers`);
-  return cell;
-}
-
-function isCell(cell) {
-  return Array.isArray(cell) && cell.length === 2 && cell.every(Number.isInteger);
-}
-
-function dot(a, b) {
-  return a[0] * b[0] + a[1] * b[1];
-}
-
-function key(x, y) {
-  return `${x},${y}`;
+function isPoint(point) {
+  return Array.isArray(point) && point.length === 2 && point.every(Number.isInteger);
 }
 
 function nonEmpty(value) {

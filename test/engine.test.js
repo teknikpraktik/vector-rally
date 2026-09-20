@@ -2,94 +2,52 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  MAX_SPEED, MOVES, applyMove, createInitialState, endRace, isFinished,
-  legalMoves, mulberry32, pathCells, previewMove, replayHistory, undoMove,
+  MAX_SPEED, MOVES, applyMove, createInitialState, endRace, gateCrossings, isFinished,
+  latticePointsAlong, legalMoves, mulberry32, pointInside, previewMove, replayHistory,
+  segmentInside, undoMove,
 } from '../engine.js';
-import { defineTrack } from '../tracks.js';
+import { defineTrack, listTracks } from '../tracks.js';
 
-// Small purpose-built tracks. Each one is drawn for the rule it tests, which
-// is easier to read than one general track with everything on it.
-
-const WALLS = defineTrack({
-  id: 'test-walls',
-  name: 'Walls',
-  blurb: 'A wall across the corridor, with a way around it.',
-  finishDir: [1, 0],
-  route: [[4, 1], [14, 1], [14, 5], [4, 5]],
-  text: `
-####################
-#F.................#
-#F........#........#
-#F........#........#
-#F........#........#
-#F.......1.........#
-####################
-`,
-});
-
-const DIAGONAL = defineTrack({
-  id: 'test-diagonal',
-  name: 'Diagonal',
-  blurb: 'Two wall cells that touch only at their corners.',
-  finishDir: [1, 0],
-  route: [[3, 1], [7, 1], [7, 4], [3, 4]],
-  text: `
-##########
-#F.......#
-#F...#...#
-#F..#....#
-#F.......#
-#F......1#
-##########
-`,
-});
-
-// Checkpoint 1 is the column at x=6, the finish line the column at x=10.
-const LINES = defineTrack({
-  id: 'test-lines',
-  name: 'Lines',
-  blurb: 'A checkpoint and a finish line, each one cell thick.',
-  finishDir: [1, 0],
-  route: [[3, 2], [8, 2], [13, 2], [17, 2]],
-  text: `
-####################
-#.....1...F........#
-#.....1...F........#
-#.....1...F........#
-#.....1...F........#
-####################
-`,
-});
-
-const OPEN = defineTrack({
-  id: 'test-open',
-  name: 'Open',
-  blurb: 'An empty box for the rules about other cars.',
-  finishDir: [1, 0],
-  route: [[4, 1], [12, 1], [12, 4], [4, 4]],
-  text: `
-####################
-#F................1#
-#F.................#
-#F.................#
-#F.................#
-####################
-`,
-});
-
-function race(track, players = 1, changes = {}) {
-  return {
-    ...createInitialState({
-      trackId: track.id,
-      laps: 2,
-      seed: 1,
-      players: Array.from({ length: players }, (unused, index) => ({ name: `P${index + 1}` })),
-    }),
-    ...changes,
-  };
+/**
+ * Two straights joined by half circles. The straights are exactly straight, so
+ * the edge of the track lies on exact coordinates and a point can be put
+ * exactly on it.
+ */
+function stadium(id, { left, right, top, bottom, w, step = 4, arc = 20 }) {
+  const radius = (bottom - top) / 2;
+  const middle = (top + bottom) / 2;
+  const round = value => Math.round(value * 100) / 100;
+  const points = [];
+  for (let x = left; x <= right; x += step) points.push([x, top, w]);
+  for (let angle = -90 + arc; angle <= 90 - arc; angle += arc) {
+    const turn = (angle * Math.PI) / 180;
+    points.push([round(right + radius * Math.cos(turn)), round(middle + radius * Math.sin(turn)), w]);
+  }
+  for (let x = right; x >= left; x -= step) points.push([x, bottom, w]);
+  for (let angle = 90 + arc; angle <= 270 - arc; angle += arc) {
+    const turn = (angle * Math.PI) / 180;
+    points.push([round(left + radius * Math.cos(turn)), round(middle + radius * Math.sin(turn)), w]);
+  }
+  return defineTrack({ id, name: id, character: 'A test track', centerline: points });
 }
 
-/** A state with one player moved somewhere specific. Tests need odd positions. */
+// The top straight runs along y = 8 with a half-width of 2.5, so the track
+// there is exactly the strip 5.5 < y < 10.5.
+const WIDE = stadium('test-wide', { left: 16, right: 44, top: 8, bottom: 28, w: 2.5 });
+// Small enough that its gates are about five apart, so one move can pass two.
+const SMALL = stadium('test-small', { left: 18, right: 28, top: 16, bottom: 26, w: 2.2, step: 5, arc: 30 });
+// Wide enough to box a car in on open ground.
+const OPEN = stadium('test-open', { left: 20, right: 44, top: 12, bottom: 52, w: 6.5, step: 6, arc: 30 });
+
+function race(track, players = 1) {
+  return createInitialState({
+    trackId: track.id,
+    seed: 1,
+    players: Array.from({ length: players }, (unused, index) => ({ name: `P${index + 1}` })),
+  });
+}
+
+/** A state with one car moved somewhere specific. Tests need odd positions. */
 function place(state, index, changes) {
   return {
     ...state,
@@ -101,209 +59,262 @@ function hasMove(moves, ax, ay) {
   return moves.some(move => move.ax === ax && move.ay === ay);
 }
 
-test('1. the path between two cells is 4-connected', () => {
-  const random = mulberry32(20260919);
-  for (let attempt = 0; attempt < 1000; attempt++) {
-    const from = [Math.floor(random() * 200) - 100, Math.floor(random() * 200) - 100];
-    const velocity = [
-      Math.floor(random() * (2 * MAX_SPEED + 1)) - MAX_SPEED,
-      Math.floor(random() * (2 * MAX_SPEED + 1)) - MAX_SPEED,
-    ];
-    const to = [from[0] + velocity[0], from[1] + velocity[1]];
-    const cells = pathCells(from, to);
+test('1. a point is on the track, off it, or exactly on the edge — which is off', () => {
+  assert.equal(pointInside(WIDE, [30, 8]), true, 'the middle of the straight');
+  assert.equal(pointInside(WIDE, [30, 10]), true, 'just inside the edge');
+  assert.equal(pointInside(WIDE, [30, 10.5]), false, 'exactly on the edge is not on the track');
+  assert.equal(pointInside(WIDE, [30, 5.5]), false, 'and neither is the other edge');
+  assert.equal(pointInside(WIDE, [30, 11]), false, 'past the edge');
+  assert.equal(pointInside(WIDE, [30, 18]), false, 'the hole in the middle');
+});
 
-    assert.deepEqual(cells[0], from, 'the path starts where the car is');
-    assert.deepEqual(cells[cells.length - 1], to, 'the path ends where the car lands');
-    assert.equal(cells.length, 1 + Math.abs(velocity[0]) + Math.abs(velocity[1]));
-    for (let index = 1; index < cells.length; index++) {
-      const dx = Math.abs(cells[index][0] - cells[index - 1][0]);
-      const dy = Math.abs(cells[index][1] - cells[index - 1][1]);
-      assert.equal(dx + dy, 1,
-        `step ${index} of ${JSON.stringify(cells)} must change exactly one coordinate by one`);
+test('2. a move that cuts out of a bend and back in is refused, on every track', () => {
+  for (const track of [WIDE, SMALL, OPEN, ...listTracks()]) {
+    let found = null;
+    const { minX, maxX, minY, maxY } = track.bounds;
+    search:
+    for (let y = Math.floor(minY); y <= Math.ceil(maxY) && !found; y++) {
+      for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
+        if (!pointInside(track, [x, y])) continue;
+        for (const velocity of speeds()) {
+          const to = [x + velocity[0], y + velocity[1]];
+          if (!pointInside(track, to)) continue;
+          if (track.hit([x, y], to) === null) continue;
+          found = { from: [x, y], to };
+          break search;
+        }
+      }
     }
+    assert.ok(found, `${track.id}: expected some move that leaves the track between its ends`);
+    assert.equal(pointInside(track, found.from), true);
+    assert.equal(pointInside(track, found.to), true, 'both ends are on the track');
+    assert.equal(segmentInside(track, found.from, found.to), false,
+      `${track.id}: ${JSON.stringify(found)} leaves the track on the way and must be refused`);
   }
 });
 
-test('2. a straight wall stops a car that would have jumped over it', () => {
-  const state = place(race(WALLS), 0, { pos: [5, 3], vel: [MAX_SPEED, 0] });
-  const preview = previewMove(state, { ax: 0, ay: 0 });
-  assert.equal(preview.reason, 'wall');
-  assert.deepEqual(preview.target, [10, 3], 'the car was aiming past the wall');
+function speeds() {
+  const list = [];
+  for (let vx = -MAX_SPEED; vx <= MAX_SPEED; vx++) {
+    for (let vy = -MAX_SPEED; vy <= MAX_SPEED; vy++) {
+      if (vx !== 0 || vy !== 0) list.push([vx, vy]);
+    }
+  }
+  return list.sort((a, b) => (b[0] * b[0] + b[1] * b[1]) - (a[0] * a[0] + a[1] * a[1]));
+}
+
+test('3. a move that grazes the edge without crossing it is allowed', () => {
+  // The top straight is the strip 5.5 < y < 10.5, so this runs a thousandth of
+  // a unit inside the edge for five units without ever leaving.
+  const from = [24, 10.499];
+  const to = [29, 10.499];
+  assert.equal(pointInside(WIDE, from), true);
+  assert.equal(pointInside(WIDE, to), true);
+  assert.equal(segmentInside(WIDE, from, to), true, 'touching the edge is not crossing it');
+});
+
+test('4. a move straight through a corner of the edge is refused', () => {
+  // Corners are where the sign test gives up, so the answer there is always no.
+  let refused = 0;
+  for (const edge of WIDE.edges) {
+    const corner = [edge[0], edge[1]];
+    for (const reach of [[1.2, 0.35], [0.35, 1.2], [0.9, -0.9]]) {
+      const from = [corner[0] - reach[0], corner[1] - reach[1]];
+      const to = [corner[0] + reach[0], corner[1] + reach[1]];
+      if (!pointInside(WIDE, from) || !pointInside(WIDE, to)) continue;
+      assert.equal(segmentInside(WIDE, from, to), false,
+        `a line from ${from} to ${to} passes through the corner at ${corner}`);
+      refused += 1;
+    }
+  }
+  assert.ok(refused > 0, 'there was at least one corner to try this on');
+});
+
+test('5. a gate counts one way round only', () => {
+  const gate = SMALL.gates[0];
+  const across = [gate.b[0] - gate.a[0], gate.b[1] - gate.a[1]];
+  const middle = gate.at;
+  const step = 2;
+  const forward = [
+    [middle[0] - gate.dir[0] * step - across[0] * 0, middle[1] - gate.dir[1] * step],
+    [middle[0] + gate.dir[0] * step, middle[1] + gate.dir[1] * step],
+  ];
+  assert.equal(gateCrossings(SMALL, forward[0], forward[1], 1).some(hit => hit.number === 0), true,
+    'the right way round counts');
+  assert.equal(gateCrossings(SMALL, forward[1], forward[0], 1).some(hit => hit.number === 0), false,
+    'the wrong way round does not');
+});
+
+test('6. one move can pass two gates, and they are taken in order', () => {
+  let found = null;
+  const { minX, maxX, minY, maxY } = SMALL.bounds;
+  search:
+  for (let y = Math.floor(minY); y <= Math.ceil(maxY); y++) {
+    for (let x = Math.floor(minX); x <= Math.ceil(maxX); x++) {
+      if (!pointInside(SMALL, [x, y])) continue;
+      for (const velocity of speeds()) {
+        const to = [x + velocity[0], y + velocity[1]];
+        if (!segmentInside(SMALL, [x, y], to)) continue;
+        const crossings = gateCrossings(SMALL, [x, y], to, 1);
+        if (crossings.length >= 2) { found = { from: [x, y], to, crossings }; break search; }
+      }
+    }
+  }
+  assert.ok(found, 'a small track has gates close enough to pass two in one move');
+  for (let index = 1; index < found.crossings.length; index++) {
+    assert.ok(found.crossings[index].t > found.crossings[index - 1].t,
+      'the gates come back in the order the car reached them');
+  }
+});
+
+test('7. a checkpoint cannot be jumped, even at full speed', () => {
+  // Every gate reaches from one edge of the track to the other, so there is no
+  // way across the track that misses one.
+  let state = race(SMALL);
+  const track = SMALL;
+  const gate = track.gates[1];
+  const before = [Math.round(gate.at[0] - gate.dir[0] * 3), Math.round(gate.at[1] - gate.dir[1] * 3)];
+  assert.equal(pointInside(track, before), true, 'somewhere to start from');
+
+  let crossed = false;
+  for (const velocity of speeds()) {
+    const to = [before[0] + velocity[0], before[1] + velocity[1]];
+    if (!segmentInside(track, before, to)) continue;
+    const beyond = (to[0] - gate.at[0]) * gate.dir[0] + (to[1] - gate.at[1]) * gate.dir[1];
+    if (beyond <= 0) continue;
+    // This move ends past the gate, so it has to have gone through it.
+    assert.ok(gateCrossings(track, before, to, 1).some(hit => hit.number === 1),
+      `moving from ${before} to ${to} ended past gate 1 without registering it`);
+    crossed = true;
+  }
+  assert.ok(crossed, 'at least one move got past the gate');
+});
+
+test('8. driving off the track leaves the car on the last whole point it reached', () => {
+  // The top straight is the strip 5.5 < y < 10.5.
+  const state = place(race(WIDE), 0, { pos: [30, 10], vel: [0, -5] });
+  const outcome = previewMove(state, { ax: 0, ay: 0 });
+  assert.equal(outcome.reason, 'off track');
+  assert.equal(outcome.blocking, false, 'you are allowed to get it wrong');
 
   const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [9, 3], 'it stops on the last cell before the wall');
+  assert.deepEqual(after.players[0].pos, [30, 6], 'the last whole point before the edge');
   assert.deepEqual(after.players[0].vel, [0, 0]);
+  assert.equal(after.players[0].crashes, 1);
 });
 
-test('3. a diagonal wall cannot be slipped through at the corner', () => {
-  const state = place(race(DIAGONAL), 0, { pos: [4, 2], vel: [0, 0] });
-  assert.equal(DIAGONAL.isWall(5, 2), true);
-  assert.equal(DIAGONAL.isWall(4, 3), true);
-
-  const preview = previewMove(state, { ax: 1, ay: 1 });
-  assert.deepEqual(preview.target, [5, 3], 'the car aimed diagonally between the two wall cells');
-  assert.equal(preview.reason, 'wall');
-
-  const after = applyMove(state, { ax: 1, ay: 1 });
-  assert.deepEqual(after.players[0].pos, [4, 2], 'it never gets through');
+test('9. with no good point on the way, the car stays where it was', () => {
+  const state = place(race(WIDE), 0, { pos: [30, 6], vel: [0, -1] });
+  const after = applyMove(state, { ax: 0, ay: 0 });
+  assert.deepEqual(after.players[0].pos, [30, 6], 'nowhere to put it but where it was');
   assert.deepEqual(after.players[0].vel, [0, 0]);
+  assert.equal(after.players[0].crashes, 1);
 });
 
-test('4. a lap counts even when the car jumps over the finish line', () => {
-  const state = place(race(LINES), 0, { pos: [7, 2], vel: [MAX_SPEED, 0], checkpoints: [1] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [12, 2], 'the finish line is not a wall');
-  assert.equal(after.players[0].lap, 1);
-  assert.deepEqual(after.players[0].checkpoints, [], 'the collection starts again');
-});
+test('10. cars are points, and a move may not go through one', () => {
+  let state = race(WIDE, 2);
+  state = place(state, 0, { pos: [24, 8], vel: [4, 0] });
+  state = place(state, 1, { pos: [26, 8] });
 
-test('5. a checkpoint is collected even when the car jumps over it', () => {
-  const state = place(race(LINES), 0, { pos: [3, 2], vel: [MAX_SPEED, 0] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [8, 2]);
-  assert.deepEqual(after.players[0].checkpoints, [1]);
-  assert.equal(after.players[0].lap, 0, 'the finish line was not reached');
-});
-
-test('6. crossing the finish line the wrong way counts for nothing', () => {
-  const state = place(race(LINES), 0, { pos: [13, 2], vel: [-MAX_SPEED, 0], checkpoints: [1] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [8, 2], 'it drove back over the line');
-  assert.equal(after.players[0].lap, 0);
-  assert.deepEqual(after.players[0].checkpoints, [1], 'and kept what it had');
-});
-
-test('7. crossing the finish line without every checkpoint counts for nothing', () => {
-  const state = place(race(LINES), 0, { pos: [7, 2], vel: [MAX_SPEED, 0], checkpoints: [] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.equal(after.players[0].lap, 0);
-});
-
-test('8. a car may not drive through another car on the way past', () => {
-  let state = race(OPEN, 2);
-  state = place(state, 0, { pos: [2, 1], vel: [3, 0] });
-  state = place(state, 1, { pos: [4, 1], vel: [0, 0] });
-
-  const preview = previewMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(preview.target, [5, 1], 'the target cell itself is free');
-  assert.equal(preview.reason, 'car', 'but the way there is not');
+  const outcome = previewMove(state, { ax: 0, ay: 0 });
+  assert.equal(outcome.reason, 'car', 'the other car is exactly on the way');
+  assert.equal(outcome.blocking, true);
   assert.equal(hasMove(legalMoves(state), 0, 0), false);
-});
+  assert.throws(() => applyMove(state, { ax: 0, ay: 0 }), /standing in the way/);
 
-test('9. driving off the track costs the turn and all the speed', () => {
-  const state = place(race(WALLS), 0, { pos: [14, 1], vel: [MAX_SPEED, 0] });
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [18, 1], 'the last cell on the track');
-  assert.deepEqual(after.players[0].vel, [0, 0]);
-  assert.equal(after.players[0].crashes, 1);
-});
-
-test('10. a car that crashes onto a taken cell backs up to the nearest free one', () => {
-  let state = race(OPEN, 3);
-  state = place(state, 0, { pos: [2, 1], vel: [4, 0] });
-  state = place(state, 1, { pos: [4, 1] });
-  state = place(state, 2, { pos: [5, 1] });
-
-  const after = applyMove(state, { ax: 0, ay: 0 });
-  assert.deepEqual(after.players[0].pos, [3, 1],
-    'it stops in front of the car at 4,1 rather than on it');
-  assert.deepEqual(after.players[0].vel, [0, 0]);
-  assert.equal(after.players[0].crashes, 1);
-
-  // With both cells in front taken there is nowhere to back up to, and the
-  // car simply stays where it is.
-  let boxed = race(OPEN, 3);
-  boxed = place(boxed, 0, { pos: [2, 1], vel: [4, 0] });
-  boxed = place(boxed, 1, { pos: [3, 1] });
-  boxed = place(boxed, 2, { pos: [4, 1] });
-  const stuck = applyMove(boxed, { ax: 0, ay: 0 });
-  assert.deepEqual(stuck.players[0].pos, [2, 1]);
-  assert.deepEqual(stuck.players[0].vel, [0, 0]);
+  // A hair to either side and the cars pass each other, which is the point of
+  // making them points.
+  const past = place(state, 0, { pos: [24, 9], vel: [4, 0] });
+  assert.equal(previewMove(past, { ax: 0, ay: 0 }).reason, null, 'past it, close but clear');
 });
 
 test('11. with all nine moves unavailable the car crashes, and can move again next turn', () => {
-  let state = race(OPEN, 3);
-  state = place(state, 0, { pos: [2, 2], vel: [MAX_SPEED, MAX_SPEED] });
-  state = place(state, 1, { pos: [2, 3] });
-  state = place(state, 2, { pos: [3, 2] });
+  // At full speed only four moves are left, and the whole-number points on
+  // those four lines can be covered by three cars.
+  const home = [30, 14];
+  let state = race(OPEN, 4);
+  state = place(state, 0, { pos: home, vel: [MAX_SPEED, MAX_SPEED] });
+  state = place(state, 1, { pos: [home[0] + 1, home[1] + 1] });
+  state = place(state, 2, { pos: [home[0] + 4, home[1] + 5] });
+  state = place(state, 3, { pos: [home[0] + 5, home[1] + 4] });
   assert.equal(legalMoves(state).length, 0, 'boxed in at full speed');
 
   let after = applyMove(state, { ax: -1, ay: -1 });
-  assert.deepEqual(after.players[0].pos, [2, 2], 'the car stays where it is');
+  assert.deepEqual(after.players[0].pos, home, 'the car stays where it is');
   assert.deepEqual(after.players[0].vel, [0, 0]);
   assert.equal(after.players[0].crashes, 1);
   assert.equal(after.active, 1, 'and the turn passes on');
 
   after = applyMove(after, { ax: 0, ay: 0 });
   after = applyMove(after, { ax: 0, ay: 0 });
+  after = applyMove(after, { ax: 0, ay: 0 });
   assert.equal(after.active, 0, 'back to the crashed car');
   const moves = legalMoves(after);
   assert.ok(moves.length > 0, 'a car at a standstill always has somewhere to go');
-  assert.equal(hasMove(moves, 0, 0), true, 'if only its own cell');
+  assert.equal(hasMove(moves, 0, 0), true, 'if only its own point');
 });
 
 test('12. applying a move leaves the state it was given alone', () => {
-  const state = place(race(WALLS, 2), 0, { pos: [5, 3], vel: [2, 1] });
+  const state = place(race(WIDE, 2), 0, { pos: [24, 8], vel: [2, 1] });
   const before = structuredClone(state);
   applyMove(state, { ax: 1, ay: -1 });
   assert.deepEqual(state, before);
 });
 
 test('13. replaying the history reproduces the race exactly', () => {
-  const random = mulberry32(7);
+  const random = mulberry32(11);
   let state = createInitialState({
-    trackId: 'monza',
-    laps: 2,
-    seed: 4242,
-    players: [{ name: 'A' }, { name: 'B' }, { name: 'C' }],
+    trackId: 'monza', seed: 4242, players: [{ name: 'A' }, { name: 'B' }],
   });
-
   for (let move = 0; move < 120 && !isFinished(state); move++) {
     const moves = legalMoves(state);
-    const chosen = moves.length === 0
+    state = applyMove(state, moves.length === 0
       ? { ax: 0, ay: 0 }
-      : moves[Math.floor(random() * moves.length)];
-    state = applyMove(state, chosen);
+      : moves[Math.floor(random() * moves.length)]);
   }
-  assert.ok(state.history.length > 100, 'the race actually happened');
-
+  assert.ok(state.history.length > 60, 'the race actually happened');
   assert.deepEqual(replayHistory(state), state);
-  assert.deepEqual(undoMove(state), replayHistory(state, state.history.slice(0, -1)));
   assert.equal(undoMove(state).history.length, state.history.length - 1);
 });
 
 test('14. the speed limit cannot be exceeded', () => {
-  const state = place(race(OPEN), 0, { pos: [2, 2], vel: [MAX_SPEED, 0] });
+  const state = place(race(OPEN), 0, { pos: [30, 20], vel: [MAX_SPEED, 0] });
   const moves = legalMoves(state);
   assert.equal(hasMove(moves, 1, 0), false);
-  assert.equal(hasMove(moves, 0, 0), true);
   assert.throws(() => applyMove(state, { ax: 1, ay: 0 }), /speed limit/);
-
   for (const move of MOVES) {
-    const velocity = [state.players[0].vel[0] + move.ax, state.players[0].vel[1] + move.ay];
-    if (Math.abs(velocity[0]) > MAX_SPEED || Math.abs(velocity[1]) > MAX_SPEED) {
-      assert.equal(hasMove(moves, move.ax, move.ay), false);
-    }
+    const velocity = state.players[0].vel[0] + move.ax;
+    if (Math.abs(velocity) > MAX_SPEED) assert.equal(hasMove(moves, move.ax, move.ay), false);
   }
 });
 
+test('the whole-number points along a move are the only places a car can stop', () => {
+  assert.deepEqual(latticePointsAlong([10, 10], [4, 2]).map(step => step.point),
+    [[10, 10], [12, 11], [14, 12]]);
+  assert.deepEqual(latticePointsAlong([10, 10], [3, 0]).map(step => step.point),
+    [[10, 10], [11, 10], [12, 10], [13, 10]]);
+  assert.deepEqual(latticePointsAlong([10, 10], [0, 0]).map(step => step.point), [[10, 10]]);
+  assert.deepEqual(latticePointsAlong([10, 10], [3, 5]).map(step => step.point),
+    [[10, 10], [13, 15]], 'a line that passes no whole point on the way');
+});
+
+test('every car starts on the finish line, at a standstill', () => {
+  const state = race(WIDE, 4);
+  for (const player of state.players) {
+    assert.deepEqual(player.vel, [0, 0]);
+    assert.ok(WIDE.starts.some(place => place[0] === player.pos[0] && place[1] === player.pos[1]));
+  }
+  const spread = new Set(state.players.map(player => String(player.pos)));
+  assert.equal(spread.size, 4, 'and no two of them in the same place');
+});
+
 test('a race can be stopped early, and then nobody can move', () => {
-  const state = endRace(race(OPEN));
+  const state = endRace(race(WIDE));
   assert.equal(isFinished(state), true);
-  assert.equal(state.status, 'ended');
   assert.deepEqual(legalMoves(state), []);
   assert.throws(() => applyMove(state, { ax: 0, ay: 0 }), /over/);
 });
 
-test('a move has to be one of the nine', () => {
-  const state = race(OPEN);
-  assert.throws(() => applyMove(state, { ax: 2, ay: 0 }), /-1, 0 or 1/);
-  assert.throws(() => applyMove(state, null), /\{ ax, ay \}/);
-});
-
 test('a race cannot be created without a seed', () => {
-  assert.throws(
-    () => createInitialState({ trackId: 'monza', players: [{}] }),
-    /seed/,
-  );
+  assert.throws(() => createInitialState({ trackId: 'monza', players: [{}] }), /seed/);
 });

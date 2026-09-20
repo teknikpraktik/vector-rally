@@ -1,56 +1,88 @@
 # Vector Rally
 
-A grid racing game for the browser. Each car has a position and a velocity
-vector. You do not steer the car — you steer its *acceleration*, one grid unit
-per turn, and live with the momentum that follows.
+A racing game for the browser, played on squared paper. Each car has a position
+and a velocity vector. You do not steer the car — you steer its *acceleration*,
+one unit per turn, and live with the momentum that follows.
 
 Built as a teaching example: the rules are small enough to read in a minute,
 and the interesting part — braking before a corner rather than after it — falls
-out of the physics instead of being programmed in.
+out of the arithmetic instead of being programmed in.
 
 ## Rules
 
-- A car has a position `(x, y)` and a velocity `(vx, vy)`, both in grid cells.
+- A car stands on a **corner of the paper**: a point where two lines cross, not
+  a square. Its position and its velocity are both pairs of whole numbers.
 - Each turn you change `vx` and `vy` by −1, 0 or +1 each: nine possible moves.
-  The new position is the old position plus the new velocity.
+  The car then travels in a straight line to position plus the new velocity.
 - **The game does not show you where that lands.** Working it out is the point,
-  so the nine cells are not marked and there is no preview. The pad tells you
-  what the velocity becomes; the addition is yours.
-- Speed is capped at −5 ≤ `vx`, `vy` ≤ 5.
-- Everything along the path between the old and the new position counts: walls,
-  other cars, checkpoints and the finish line. At speed 5 you cannot jump over a
-  one-cell wall, and you cannot jump over the finish line either.
-- Leave the track and the car is put back on the last valid cell of its path
-  with its velocity reset to zero. The turn ends there. Miscounting costs you.
-- Two cars may never share a cell, and a move that crosses an occupied cell is
-  impossible — it is crossed out on the pad and cannot be chosen. If all nine
-  are impossible the car crashes: velocity resets, the car stays put, play
-  moves on.
-- The lap counts when the car crosses the finish line the way the arrows on the
-  track point, with every checkpoint collected in order. Crossing backwards, or
-  with checkpoints missing, does nothing.
+  so nothing is marked on the track and there is no preview. The pad tells you
+  what the velocity becomes, and nothing else.
+- Neither part of the velocity may leave −5…5.
+- The whole line from where you are to where you land has to stay on the track.
+  At speed 5 that line is five units long and can cut the corner out of a bend
+  and back in again with both of its ends still on the track. That is leaving
+  the track, and it is caught.
+- Go off and the car is put back on the last whole-number point it reached,
+  with its velocity set to zero. That costs you the turn. Because nobody can
+  check a curved edge by eye, the game shows the exact point where the line
+  crossed the edge, and the piece of edge it crossed, before moving the car.
+- Cars are points. Two of them may not stand on the same point, and a move
+  whose line passes exactly through another car is impossible. Passing close is
+  not — with point-sized cars there is room.
+- A move that is genuinely impossible — another car exactly on the line, or
+  over the speed limit — is crossed out on the pad and cannot be taken.
+- One lap. It counts when you cross the finish line the way the arrows point,
+  having passed every hidden checkpoint in order on the way round.
 
-One lap. Every car starts on the finish line, side by side. 1–4 players take
-turns on the same device.
+Every car starts on the finish line, side by side, at a standstill. 1–4 players
+take turns on the same device. Mouse and touch only: press one of the nine pad
+buttons and let go to take that move.
 
-The edge of the track is drawn as one continuous curve rather than a staircase
-of right angles, but the game is played on the grid underneath it: a cell is on
-the track when its corner falls inside the line.
+## The track
 
-## Tracks
+A track is an **area of the plane** bounded by two closed curves, not a grid of
+cells. The squares on the paper are there to count in; the edge of the track
+pays them no attention.
 
-Twelve of them, named after places rather than events: Monza, Spa, Silverstone,
-Monaco, Suzuka, Interlagos, Imola, Hockenheim, Zandvoort, Hungaroring,
-Spielberg and Montréal.
+Tracks are written as a centreline with a width:
 
-They are hand-drawn on a grid of sixty to ninety cells, which is nowhere near
-enough to reproduce a real circuit — a hairpin comes out as a single cell. What
-they reproduce is the character: Monza fast and barely interrupted, Monaco all
-corners, Suzuka crossing over itself, Hockenheim two enormous straights. The
-track chooser says so on the screen where you pick one.
+```js
+centerline: [[x, y, w], [x, y, w], ...]   // a closed loop, w is the half-width
+```
 
-A perfect lap, found by searching every (position, velocity) a car can be in,
-takes between 35 and 68 moves depending on the track.
+The loop is smoothed with a closed Catmull-Rom spline and offset by ±w to make
+the two edges. One description gives the edges, the driving line the arrows
+follow, and the gates across the track all at once.
+
+Offsetting has a trap: where the centreline bends tighter than w, the inner
+edge folds through itself — Monaco's hairpin is exactly there. The parser
+measures the curvature everywhere and refuses a track that bends too tightly,
+so a broken track fails when it is loaded rather than in the third corner.
+
+The finish line and the checkpoints are **gates**: a straight line across the
+track with a direction. One move at speed 5 can pass two of them, so the
+crossings are sorted along the line and taken in order — otherwise a car could
+collect the second checkpoint and skip the first.
+
+### The six
+
+Monza, Spa, Silverstone, Monaco, Suzuka and Interlagos — named after places
+rather than events. They are drawn by hand and are nowhere near measured
+reproductions of real circuits; what they reproduce is character. Monza is fast
+with three chicanes to brake for, Monaco is barely three units wide with a
+hairpin, Interlagos is short and runs the other way round.
+
+**Anywhere** is not a seventh track but a generator: it draws a closed
+centreline from the seed of the race and checks it with the same parser
+everything else goes through, flattening the shape and trying again if it came
+out too tight. Its id carries the seed, so a race on one can be replayed or
+reloaded. The tests run it over 2000 seeds.
+
+A perfect lap, found by searching every `(point, velocity, checkpoints)` a car
+can be in, takes 30 to 39 moves depending on the track. A beginner runs perhaps
+70% over that, so reckon on 50–65 moves each: comfortable for two or three
+players in a forty-minute lesson, tight for four on the longest tracks. There
+is a button to end the race early.
 
 ## Running it locally
 
@@ -85,16 +117,20 @@ finds `test/*.test.js` by itself:
 node --test
 ```
 
-To name the directory instead, pass it as a pattern — `node --test "test/*.test.js"`.
-Plain `node --test test/` is rejected by Node on Windows, which reads the
-argument as a module rather than a directory.
+To name the directory instead, pass it as a pattern —
+`node --test "test/*.test.js"`. Plain `node --test test/` is rejected by Node on
+Windows, which reads the argument as a module rather than a directory.
+
+The suite includes a breadth-first search over every state a car can be in, for
+every track, which proves each lap can actually be driven and measures the
+fastest one.
 
 ## File structure
 
 ```
 index.html              UI, canvas, all CSS and UI/rendering JS inline
-engine.js               game logic, ES module, no DOM
-tracks.js               tracks as editable text, plus the parser
+engine.js               the rules, ES module, no DOM
+tracks.js               track geometry, the six tracks, and the generator
 agents.js               computer opponents
 version.js              single source of the version string
 sw.js                   service worker
@@ -109,8 +145,8 @@ test/
   agents.test.js
 ```
 
-The game logic lives in modules so the tests can import it directly. CSS,
-UI and rendering stay inline in `index.html`.
+The rules live in modules so the tests can import them directly. CSS, UI and
+rendering stay inline in `index.html`.
 
 The icons are generated rather than drawn by hand, by a script with no
 dependencies — it writes the PNG chunks itself using Node's `zlib`:
@@ -132,7 +168,9 @@ no dependencies. `sw.js` sits in the root so its scope covers the whole site.
 Built in steps, each one its own commit:
 
 1. Core engine, one track, local human play
-2. Twelve hand-drawn tracks
+2. Twelve hand-drawn tracks (on a grid)
+2b. Continuous track geometry, positions on the lattice, six tracks
+2c. Player count and swipeable track selection
 3. Greedy and planning agents, then a Q-learning agent trained live in the page
 4. Landing page and install instructions
 5. Screenshot, measurements, final README

@@ -1,185 +1,239 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getTrack, listTracks, parseTrack, trackIds } from '../tracks.js';
+import {
+  EPSILON, generateTrack, getTrack, listTracks, parseTrack, trackIds,
+} from '../tracks.js';
+import { MAX_SPEED, MOVES, gateCrossings, pointInside, segmentInside } from '../engine.js';
 
-const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-
-/** The cells of one line, and whether it runs across or down. */
-function lineOf(track, cells) {
-  const xs = new Set(cells.map(([x]) => x));
-  const ys = new Set(cells.map(([, y]) => y));
-  assert.ok(xs.size === 1 || ys.size === 1,
-    `line on ${track.id} must be straight, found ${JSON.stringify(cells)}`);
-  return xs.size === 1 ? { axis: 'v', step: [0, 1] } : { axis: 'h', step: [1, 0] };
-}
+const EXPECTED = ['monza', 'spa', 'silverstone', 'monaco', 'suzuka', 'interlagos'];
 
 /**
- * A line that does not reach both walls can be driven around, and then the lap
- * never counts. This checks that every checkpoint and the finish line is an
- * unbroken line from one side of the track to the other.
+ * Breadth-first over every (point, velocity, checkpoints collected) a car can
+ * be in. It answers two questions at once: whether the lap can be driven at
+ * all, and how few moves the very best possible lap takes. The second number
+ * is what tells us whether a four-player race fits in a lesson.
  */
-function assertSpansTheTrack(track, cells, what) {
-  const { step } = lineOf(track, cells);
-  const sorted = [...cells].sort((a, b) => (a[0] - b[0]) || (a[1] - b[1]));
-  for (let index = 1; index < sorted.length; index++) {
-    const dx = sorted[index][0] - sorted[index - 1][0];
-    const dy = sorted[index][1] - sorted[index - 1][1];
-    assert.equal(Math.abs(dx) + Math.abs(dy), 1, `${what} on ${track.id} has a gap in it`);
+function fastestLap(track, limit = 120) {
+  const gates = track.checkpointCount;
+  const span = 2 * MAX_SPEED + 1;
+  const originX = Math.floor(track.bounds.minX) - 2;
+  const originY = Math.floor(track.bounds.minY) - 2;
+  const width = Math.ceil(track.bounds.maxX - originX) + 4;
+  const key = (x, y, vx, vy, got) =>
+    ((((y - originY) * width + (x - originX)) * span + vx + MAX_SPEED) * span
+      + vy + MAX_SPEED) * (gates + 1) + got;
+
+  const clear = new Map();
+  const canGo = (from, to) => {
+    const id = `${from[0]},${from[1]},${to[0]},${to[1]}`;
+    if (!clear.has(id)) clear.set(id, segmentInside(track, from, to));
+    return clear.get(id);
+  };
+
+  const start = track.starts[Math.floor(track.starts.length / 2)];
+  const seen = new Set([key(start[0], start[1], 0, 0, 0)]);
+  let frontier = [[start[0], start[1], 0, 0, 0]];
+
+  for (let depth = 1; depth <= limit; depth++) {
+    const next = [];
+    for (const [x, y, vx, vy, got] of frontier) {
+      for (const move of MOVES) {
+        const nvx = vx + move.ax;
+        const nvy = vy + move.ay;
+        if (Math.abs(nvx) > MAX_SPEED || Math.abs(nvy) > MAX_SPEED) continue;
+        const to = [x + nvx, y + nvy];
+        if (!canGo([x, y], to)) continue;
+
+        let collected = got;
+        for (const gate of gateCrossings(track, [x, y], to, 1)) {
+          if (gate.number === collected + 1) collected += 1;
+          else if (gate.number === 0 && collected === gates) return depth;
+        }
+        const id = key(to[0], to[1], nvx, nvy, collected);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        next.push([to[0], to[1], nvx, nvy, collected]);
+      }
+    }
+    if (next.length === 0) return null;
+    frontier = next;
   }
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  assert.equal(track.isDrivable(first[0] - step[0], first[1] - step[1]), false,
-    `${what} on ${track.id} does not reach the edge of the track at ${first}`);
-  assert.equal(track.isDrivable(last[0] + step[0], last[1] + step[1]), false,
-    `${what} on ${track.id} does not reach the edge of the track at ${last}`);
+  return null;
 }
 
-function connectedCells(track) {
-  let start = null;
-  let total = 0;
-  for (let y = 0; y < track.height; y++) {
-    for (let x = 0; x < track.width; x++) {
-      if (!track.isDrivable(x, y)) continue;
-      if (!start) start = [x, y];
-      total += 1;
-    }
-  }
-  const seen = new Set([String(start)]);
-  const queue = [start];
-  while (queue.length > 0) {
-    const [x, y] = queue.pop();
-    for (const [dx, dy] of NEIGHBOURS) {
-      const next = [x + dx, y + dy];
-      if (!track.isDrivable(next[0], next[1]) || seen.has(String(next))) continue;
-      seen.add(String(next));
-      queue.push(next);
-    }
-  }
-  return { reachable: seen.size, total };
-}
-
-test('every track parses', () => {
-  const tracks = listTracks();
-  assert.ok(tracks.length > 0);
-  assert.deepEqual(tracks.map(track => track.id), trackIds());
-  for (const track of tracks) {
+test('the six tracks are there, and each is parsed once', () => {
+  assert.deepEqual(trackIds(), EXPECTED);
+  for (const track of listTracks()) {
     assert.equal(getTrack(track.id), track, 'a track is parsed once and then shared');
     assert.ok(track.name.length > 0);
-    assert.ok(track.blurb.length > 0);
-    assert.ok(track.width >= 60 && track.width <= 100,
-      `${track.id} is ${track.width} cells wide, which is outside 60..100`);
+    assert.ok(track.character.length > 0);
   }
 });
 
-test('every car starts on the finish line', () => {
+test('15a. no track bends tighter than it is wide', () => {
   for (const track of listTracks()) {
-    assert.ok(track.starts.length >= 4, `${track.id} has room for ${track.starts.length} cars`);
-    assert.deepEqual(track.starts, track.finishCells,
-      `${track.id}: the starting places are the finish line itself`);
-    const seen = new Set();
-    for (const [x, y] of track.starts) {
-      assert.equal(track.isDrivable(x, y), true, `${track.id}: start ${x},${y} is off the track`);
-      assert.equal(track.isWall(x, y), false, `${track.id}: start ${x},${y} is a wall`);
-      assert.equal(track.checkpointAt(x, y), 0, `${track.id}: start ${x},${y} is on a checkpoint`);
-      assert.equal(seen.has(String([x, y])), false, `${track.id}: two cars share ${x},${y}`);
-      seen.add(String([x, y]));
+    for (let index = 0; index < track.samples.length; index++) {
+      const previous = track.samples[(index - 1 + track.samples.length) % track.samples.length];
+      const here = track.samples[index];
+      const next = track.samples[(index + 1) % track.samples.length];
+      let turn = Math.atan2(next.y - here.y, next.x - here.x)
+        - Math.atan2(here.y - previous.y, here.x - previous.x);
+      while (turn > Math.PI) turn -= Math.PI * 2;
+      while (turn < -Math.PI) turn += Math.PI * 2;
+      if (Math.abs(turn) < 1e-6) continue;
+      const along = (Math.hypot(here.x - previous.x, here.y - previous.y)
+        + Math.hypot(next.x - here.x, next.y - here.y)) / 2;
+      assert.ok(along / Math.abs(turn) >= here.w,
+        `${track.id}: radius ${(along / Math.abs(turn)).toFixed(2)} at `
+        + `${here.x.toFixed(1)},${here.y.toFixed(1)} is tighter than its half-width ${here.w}`);
     }
   }
 });
 
-test('every track has a route that shows which way round to go', () => {
+test('15b. no edge of a track crosses itself or the other edge', () => {
   for (const track of listTracks()) {
-    assert.ok(track.route.length >= 8, `${track.id} has only ${track.route.length} route cells`);
-    const step = (a, b) => Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]));
-    for (let index = 0; index < track.route.length; index++) {
-      const here = track.route[index];
-      const next = track.route[(index + 1) % track.route.length];
-      assert.equal(track.isDrivable(here[0], here[1]), true,
-        `${track.id}: route cell ${here} is off the track`);
-      assert.ok(step(here, next) <= 8,
-        `${track.id}: route jumps from ${here} to ${next}`);
+    for (let a = 0; a < track.edges.length; a++) {
+      const one = track.edges[a];
+      for (let b = a + 2; b < track.edges.length; b++) {
+        const other = track.edges[b];
+        if (Math.max(one[0], one[2]) < Math.min(other[0], other[2])
+          || Math.min(one[0], one[2]) > Math.max(other[0], other[2])
+          || Math.max(one[1], one[3]) < Math.min(other[1], other[3])
+          || Math.min(one[1], one[3]) > Math.max(other[1], other[3])) continue;
+        assert.equal(crosses(one, other), false,
+          `${track.id}: the edge crosses itself near ${one[0].toFixed(1)},${one[1].toFixed(1)}`);
+      }
     }
   }
 });
 
-test('every track has a finish line with a direction', () => {
+function crosses(one, other) {
+  const side = (ax, ay, bx, by, px, py) => (bx - ax) * (py - ay) - (by - ay) * (px - ax);
+  const straddles = (a, b) => (a > EPSILON && b < -EPSILON) || (a < -EPSILON && b > EPSILON);
+  return straddles(side(...one, other[0], other[1]), side(...one, other[2], other[3]))
+    && straddles(side(...other, one[0], one[1]), side(...other, one[2], one[3]));
+}
+
+test('15c. the finish line holds four cars, all of them on the track', () => {
   for (const track of listTracks()) {
-    assert.ok(track.finishCells.length > 0, `${track.id} has no finish line`);
-    const [dx, dy] = track.finishDir;
-    assert.ok(dx !== 0 || dy !== 0, `${track.id} has no driving direction`);
-    assert.ok([-1, 0, 1].includes(dx) && [-1, 0, 1].includes(dy));
-    assertSpansTheTrack(track, track.finishCells, 'the finish line');
+    assert.ok(track.starts.length >= 4,
+      `${track.id}: only ${track.starts.length} whole-number points on the line`);
+    for (const place of track.starts) {
+      assert.equal(pointInside(track, place), true, `${track.id}: ${place} is not on the track`);
+    }
   }
 });
 
-test('every track has at least four checkpoints, numbered in order', () => {
+test('15d. every track has eight or nine checkpoints, evenly spread and in order', () => {
   for (const track of listTracks()) {
-    assert.ok(track.checkpointCount >= 4,
+    assert.ok(track.checkpointCount >= 8 && track.checkpointCount <= 9,
       `${track.id} has ${track.checkpointCount} checkpoints`);
-    for (let number = 1; number <= track.checkpointCount; number++) {
-      const cells = track.checkpointCells.get(number);
-      assert.ok(cells && cells.length > 0, `${track.id} is missing checkpoint ${number}`);
-      assertSpansTheTrack(track, cells, `checkpoint ${number}`);
+    assert.deepEqual(track.gates.map(gate => gate.number),
+      Array.from({ length: track.gates.length }, (unused, index) => index),
+      `${track.id}: the gates are numbered from the finish line upwards`);
+
+    // Each gate reaches right across the track: one end outside each edge.
+    for (const gate of track.gates) {
+      assert.equal(pointInside(track, gate.a), false, `${track.id}: gate ${gate.number} stops short`);
+      assert.equal(pointInside(track, gate.b), false, `${track.id}: gate ${gate.number} stops short`);
+      assert.equal(pointInside(track, gate.at), true, `${track.id}: gate ${gate.number} misses the track`);
+    }
+
+    const spacing = [];
+    for (let number = 0; number < track.gates.length; number++) {
+      const here = along(track, track.gates[number].at);
+      const next = along(track, track.gates[(number + 1) % track.gates.length].at);
+      spacing.push(((next - here) + track.length) % track.length);
+    }
+    const even = track.length / track.gates.length;
+    for (const gap of spacing) {
+      assert.ok(gap > even * 0.55 && gap < even * 1.45,
+        `${track.id}: gates ${gap.toFixed(1)} apart where ${even.toFixed(1)} was meant`);
     }
   }
 });
 
-test('every track surface is in one piece', () => {
-  for (const track of listTracks()) {
-    const { reachable, total } = connectedCells(track);
-    assert.equal(reachable, total, `${track.id} falls into more than one piece`);
+function along(track, point) {
+  let best = 0;
+  let bestGap = Infinity;
+  for (const sample of track.samples) {
+    const gap = Math.hypot(sample.x - point[0], sample.y - point[1]);
+    if (gap < bestGap) { bestGap = gap; best = sample.s; }
   }
-});
+  return best;
+}
 
-test('the parser refuses a broken track', () => {
-  const good = `
-##########
-#F.......#
-#F......1#
-#F.......#
-#F.......#
-##########
-`;
-  let uniqueId = 0;
-  const source = (changes = {}) => ({
-    id: `broken-${uniqueId += 1}`,
-    name: 'Broken',
-    blurb: 'Broken',
-    finishDir: [1, 0],
-    route: [[3, 1], [7, 1], [7, 3], [3, 3]],
-    text: good,
-    ...changes,
+test('16. every track can actually be driven round, and the fastest lap is a lesson-sized number',
+  { timeout: 120000 }, () => {
+    const laps = [];
+    for (const track of listTracks()) {
+      const moves = fastestLap(track);
+      assert.ok(moves !== null, `${track.id} cannot be driven round at all`);
+      assert.ok(moves >= 12 && moves <= 55,
+        `${track.id}: a perfect lap takes ${moves} moves, which is outside what a lesson holds`);
+      laps.push(`${track.id} ${moves}`);
+    }
+    assert.equal(laps.length, 6);
   });
 
-  assert.doesNotThrow(() => parseTrack(source()));
+test('the parser refuses a broken track', () => {
+  const good = {
+    id: 'broken', name: 'Broken', character: 'Broken',
+    centerline: ring(20, 3),
+  };
+  const with_ = changes => ({ ...good, ...changes });
+  assert.doesNotThrow(() => parseTrack(with_({ id: 'broken-ok' })));
 
-  assert.throws(() => parseTrack(source({ text: good.replace('.', 'x') })),
-    /unknown character/);
-  assert.throws(() => parseTrack(source({ text: good.replace(/F/g, '.') })),
-    /at least 4 cells/);
-  assert.throws(() => parseTrack(source({ route: [[1, 1]] })), /at least 4 cells/);
-  assert.throws(() => parseTrack(source({ route: [[1, 1], [2, 1], [3, 1], [9, 9]] })),
-    /not on the track/);
-  assert.throws(() => parseTrack(source({ text: good.replace('1', '2') })),
-    /numbered 1..k/);
-  assert.throws(() => parseTrack(source({ finishDir: [0, 0] })), /finishDir/);
-  assert.throws(() => parseTrack(source({ finishDir: [2, 0] })), /finishDir/);
-  assert.throws(() => parseTrack(source({ name: '' })), /non-empty string/);
-  assert.throws(() => parseTrack(source({
-    route: [[3, 1], [7, 1], [7, 2], [3, 2]],
-    text: `
-##########
-#F......1#
-#F.......#
-##########
-#F.......#
-#F.......#
-##########
-`,
-  })), /not connected/);
+  assert.throws(() => parseTrack(with_({ name: '' })), /non-empty string/);
+  assert.throws(() => parseTrack(with_({ centerline: [[1, 1, 2], [2, 2, 2]] })), /at least 6 points/);
+  assert.throws(() => parseTrack(with_({ centerline: [...ring(20, 3).slice(0, -1), [1, 2]] })),
+    /is not \[x, y, w\]/);
+  assert.throws(() => parseTrack(with_({ centerline: ring(20, 0.2) })), /too small/);
+  // A ring far tighter than it is wide: the inner edge would turn inside out.
+  assert.throws(() => parseTrack(with_({ centerline: ring(4, 3.5) })), /fold through itself/);
 });
+
+/** A circular centreline of the given radius and half-width. */
+function ring(radius, w, count = 20) {
+  return Array.from({ length: count }, (unused, index) => {
+    const angle = (index / count) * Math.PI * 2;
+    return [
+      Math.round((40 + radius * Math.cos(angle)) * 100) / 100,
+      Math.round((40 + radius * Math.sin(angle)) * 100) / 100,
+      w,
+    ];
+  });
+}
 
 test('an unknown track is an error, not an empty track', () => {
   assert.throws(() => getTrack('nürburgring'), /Unknown track/);
+});
+
+test('Anywhere produces a track that loads, for every seed it is given',
+  { timeout: 120000 }, () => {
+    const lengths = [];
+    for (let seed = 1; seed <= 2000; seed++) {
+      const { track } = generateTrack(seed);
+      assert.ok(track.starts.length >= 4, `seed ${seed}: only ${track.starts.length} on the line`);
+      assert.ok(track.checkpointCount >= 8, `seed ${seed}: ${track.checkpointCount} checkpoints`);
+      assert.ok(track.length > 60 && track.length < 220, `seed ${seed}: length ${track.length}`);
+      lengths.push(track.length);
+    }
+    assert.equal(lengths.length, 2000);
+  });
+
+test('Anywhere gives the same track for the same seed, and different ones for different seeds', () => {
+  const first = generateTrack(1234, 'anywhere-repeat-a').source.centerline;
+  const again = generateTrack(1234, 'anywhere-repeat-b').source.centerline;
+  const other = generateTrack(1235, 'anywhere-repeat-c').source.centerline;
+  assert.deepEqual(first, again, 'the same seed draws the same track');
+  assert.notDeepEqual(first, other);
+});
+
+test('a generated track can be driven round', { timeout: 120000 }, () => {
+  for (const seed of [7, 99, 4242]) {
+    const { track } = generateTrack(seed, `anywhere-drive-${seed}`);
+    assert.ok(fastestLap(track) !== null, `the track from seed ${seed} cannot be driven round`);
+  }
 });
