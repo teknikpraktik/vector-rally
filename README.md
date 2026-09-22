@@ -187,6 +187,7 @@ index.html              UI, canvas, all CSS and UI/rendering JS inline
 engine.js               the rules, ES module, no DOM
 tracks.js               track geometry, the six tracks, and the generator
 version.js              single source of the version string
+sw.js                   removes the service worker earlier versions installed
 favicon.ico
 screenshot.png
 tools/make-icons.mjs    generates the favicon, run by hand
