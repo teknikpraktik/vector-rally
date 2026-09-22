@@ -852,32 +852,34 @@ function startRace() {
 // ---------------------------------------------------------------------------
 
 /**
- * A car on Silverstone: along the top, braking down into the dip in the
- * middle, round, and away out of the picture — once, leaving its trace
- * behind. The points are a real run under the real rules, recorded once and
+ * A car on Silverstone: in at the bottom left, up and round the corner, along
+ * the top, braking down into the dip in the middle, round, and away out of the
+ * picture — once, leaving its trace behind. The points are a real run under the real rules, recorded once and
  * written down here, from a search that was told to keep a whole unit clear of
  * the edge — so the car, drawn a little larger than it is, is never over the
  * line. The dots spread out where it is quick and bunch up where it has
  * braked, which is the whole game in one picture.
  *
- * The picture shows DEMO_FRAME of the paper. The last few points lie beyond
- * it, which is how the car drives out of the picture.
+ * The picture shows DEMO_FRAME of the paper. The first few points lie below
+ * it and the last few beyond it, which is how the car drives into the picture
+ * and out of it again.
  */
 const DEMO_TRACK = 'silverstone';
-const DEMO_FRAME = { minX: 8.5, maxX: 42.5, minY: 1.5, maxY: 22.5 };
+const DEMO_FRAME = { minX: 2.5, maxX: 42.5, minY: 1.5, maxY: 22.5 };
 const DEMO_PATH = [
-  [12, 6], [15, 5], [19, 5], [22, 6], [24, 8], [25, 10], [25, 13], [26, 16],
-  [27, 18], [29, 19], [32, 19], [35, 18], [37, 16], [38, 13], [38, 10], [39, 7],
-  [41, 5], [44, 4], [47, 4], [51, 5],
+  [9, 32], [7, 29], [6, 25], [6, 20], [6, 15], [7, 11], [9, 8], [12, 6],
+  [15, 5], [19, 5], [22, 6], [24, 8], [25, 10], [25, 13], [26, 16], [27, 18],
+  [29, 19], [32, 19], [35, 18], [37, 16], [38, 13], [38, 10], [39, 7], [41, 5],
+  [44, 4], [47, 4], [51, 5],
 ];
-const demo = { showing: 2, timer: null };
+const demo = { showing: 1, timer: null };
 
 function runDemo() {
   // Not every browser answers this, and the picture matters more than the
   // movement does.
   const still = typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  demo.showing = still ? DEMO_PATH.length : 2;
+  demo.showing = still ? DEMO_PATH.length : 1;
   drawDemo();
   window.clearInterval(demo.timer);
   if (still) return;
@@ -969,7 +971,7 @@ function drawDemo() {
   // Once the whole path is shown the car has gone, and only its trace is left.
   if (demo.showing >= DEMO_PATH.length) return;
   const [carX, carY] = at(...shown[shown.length - 1]);
-  paintCar(paint, carX, carY, headingAlong(shown), size * 1.2, PLAYER_COLORS[0]);
+  paintCar(paint, carX, carY, headingAlong(shown) ?? 0, size * 1.2, PLAYER_COLORS[0]);
 }
 
 // ---------------------------------------------------------------------------
