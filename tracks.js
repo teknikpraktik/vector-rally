@@ -348,8 +348,9 @@ function bounds(loop) {
 // ---------------------------------------------------------------------------
 
 /**
- * Every question about the edge of the track — and the search in agents.js
- * will ask tens of thousands of them — only concerns edges that are nearby.
+ * Every question about the edge of the track — and the search for the fastest
+ * lap in the tests asks a great many of them — only concerns edges that are
+ * nearby.
  * Edges go into square buckets for that, and into a bucket per row of the
  * paper for the sideways ray that decides whether a point is inside.
  */

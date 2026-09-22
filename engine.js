@@ -38,9 +38,12 @@ export const MOVES = Object.freeze([
   { ax: -1, ay: 1 }, { ax: 0, ay: 1 }, { ax: 1, ay: 1 },
 ].map(move => Object.freeze(move)));
 
-/** Colour and shape both, because colour alone is no use to a colour-blind pupil. */
-export const PLAYER_COLORS = Object.freeze(['#2f6f8f', '#a1503f', '#4a7a44', '#7a5b9b']);
-export const PLAYER_SYMBOLS = Object.freeze(['circle', 'square', 'triangle', 'diamond']);
+/**
+ * One colour a car, from a palette that stays distinguishable for the common
+ * kinds of colour blindness. Each car also carries its number on the roof,
+ * because colour alone is no use to a colour-blind pupil.
+ */
+export const PLAYER_COLORS = Object.freeze(['#0072b2', '#d55e00', '#009e73', '#cc79a7']);
 
 const MAX_PLAYERS = 4;
 
@@ -101,10 +104,8 @@ export function gateCrossings(track, from, to, limit = 1) {
 
 /**
  * How far along the move it passes this one gate the right way round, or null.
- * The planner in agents.js asks this of a single gate tens of thousands of
- * times a turn, which is why it is separate from the loop above.
  */
-export function crossesGate(gate, from, to, limit = 1) {
+function crossesGate(gate, from, to, limit = 1) {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   const gx = gate.b[0] - gate.a[0];
@@ -159,9 +160,7 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
     players: players.map((player, index) => ({
       id: index,
       name: nonEmpty(player.name) ? player.name : `P${index + 1}`,
-      kind: nonEmpty(player.kind) ? player.kind : 'human',
       color: nonEmpty(player.color) ? player.color : PLAYER_COLORS[index],
-      symbol: nonEmpty(player.symbol) ? player.symbol : PLAYER_SYMBOLS[index],
       pos: [...places[index]],
       vel: [0, 0],
       trace: [],
@@ -450,9 +449,7 @@ export function initialStateOf(state) {
     appVersion: state.appVersion,
     players: state.players.map(player => ({
       name: player.name,
-      kind: player.kind,
       color: player.color,
-      symbol: player.symbol,
     })),
   });
 }
