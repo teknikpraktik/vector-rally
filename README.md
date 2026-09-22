@@ -72,7 +72,7 @@ would put the snapping back in by the back door.
 
 ### On the race screen
 
-At the top: *← Home*, whose turn it is, and the speed — nothing else, so the
+At the top: *Home*, whose turn it is, and the speed — nothing else, so the
 position has to be read off the paper. At the bottom, *Show the nine*: a switch
 that stays pressed in, with a tick, while it is on, and says in the banner when
 it changes.
@@ -116,8 +116,9 @@ The picture on the start page is a real run on Silverstone, recorded once and
 written into `index.html` as a list of points. The search that found it was
 told to keep a whole unit clear of the edge, so the car — drawn a little larger
 than it is, so it can be seen on a phone — is never over the line. The dots
-spread out where it is quick and bunch up where it has braked. It holds still
-for anyone who has asked their machine to stop animating things.
+spread out where it is quick and bunch up where it has braked. It plays once:
+the car drives out of the picture and leaves its trace behind. For anyone who
+has asked their machine to stop animating things it is just the trace.
 
 ## Records
 
