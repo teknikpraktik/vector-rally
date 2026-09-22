@@ -206,6 +206,23 @@ function ring(radius, w, count = 20) {
   });
 }
 
+test('a track written as corners is rounded off, and refused if the corners do not fit', () => {
+  const square = radius => ({
+    id: `corners-${radius}`, name: 'Corners', character: 'A test track',
+    corners: [[10, 10, radius, 2.5], [40, 10, radius, 2.5], [40, 40, radius, 2.5], [10, 40, radius, 2.5]],
+  });
+  const track = parseTrack(square(6));
+  // Rounded off: the centreline never reaches the corner itself.
+  assert.ok(track.centerline.every(([x, y]) => Math.hypot(x - 10, y - 10) > 2));
+  assert.equal(pointInside(track, [25, 10]), true, 'the straight is on the track');
+  assert.equal(pointInside(track, [25, 25]), false, 'the middle is not');
+  // Two radii of 16 need 32 units of straight between the corners, and there are 30.
+  assert.throws(() => parseTrack(square(16)), /too close together/);
+  assert.throws(() => parseTrack({ ...square(6), corners: [[1, 2, 3]] }), /at least 3 corners/);
+  assert.throws(() => parseTrack({ ...square(6), corners: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] }),
+    /is not \[x, y, r, w\]/);
+});
+
 test('an unknown track is an error, not an empty track', () => {
   assert.throws(() => getTrack('nürburgring'), /Unknown track/);
 });

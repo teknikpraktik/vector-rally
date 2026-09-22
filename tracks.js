@@ -6,11 +6,18 @@
  * them. The squared paper is background and arithmetic aid; the edge of the
  * track pays it no attention.
  *
- * Tracks are written as a centreline with a width:
+ * The six tracks are written as the corners of a closed loop:
  *
- *   centerline: [[x, y, w], [x, y, w], ...]   a closed loop
+ *   corners: [[x, y, r, w], [x, y, r, w], ...]
  *
- * where w is the half-width of the track at that point. The loop is smoothed
+ * Each corner is rounded off with an arc of radius r, the straights between
+ * them stay straight, and w is the half-width of the track at that corner. A
+ * handful of corners is enough to give a track its own shape, and anyone can
+ * read one off the paper and change it.
+ *
+ * That becomes a centreline — a list of [x, y, w] points round the loop — and
+ * the tracks made up on the spot are written as a centreline directly. The
+ * centreline is smoothed
  * with a closed Catmull-Rom spline and then offset by ±w to make the two
  * edges. That gives smooth edges without any tidying up afterwards, it makes
  * the centreline double as the driving line the arrows follow, and it makes a
@@ -47,80 +54,65 @@ const MAX_GATES = 9;
 /** The inner edge folds through itself at radius w, so keep a margin. */
 const CURVE_MARGIN = 1.15;
 
+/**
+ * The six. Each corner is [x, y, r, w]: where it is, the radius it is rounded
+ * off to, and the half-width of the track there. They are named after places
+ * and go for a shape of their own rather than a copy of the real circuit.
+ */
 const SOURCES = [
   {
     id: 'monza',
     name: 'Monza',
-    character: 'Fast, three chicanes, hardly any braking',
-    centerline: [
-      [14, 34, 3.2], [20, 34, 2.87], [25.5, 33.8, 2.21], [29.5, 31.5, 1.7], [34.5, 31.5, 1.7],
-      [38.5, 33.8, 2.21], [44, 34, 2.87], [50, 34, 3.2], [55, 33.6, 3], [59.5, 31.6, 2.9],
-      [61.8, 28, 2.9], [62, 24, 2.47], [60.6, 20.6, 1.9], [58.4, 17.6, 1.7], [58.4, 14.4, 1.7],
-      [60.6, 11.4, 1.5], [62, 8, 1.58], [59.5, 4.6, 2.05], [55, 2.5, 2.67], [50, 2, 3.2],
-      [44, 2, 2.87], [38.5, 2.2, 2.21], [34.5, 4.5, 1.7], [29.5, 4.5, 1.7], [25.5, 2.2, 2.21],
-      [20, 2, 2.87], [14, 2, 3.2], [9.4, 3.6, 3], [6.4, 6.5, 3], [6, 11, 3.2],
-      [6, 17, 3.2], [6, 25, 3.2], [6.4, 29, 3], [9.4, 32.4, 3]
+    character: 'Long straights, and a dip in the middle of the top one',
+    corners: [
+      [60, 34, 9, 3.2], [10, 34, 6, 3.2], [8, 8, 6, 3], [30, 4, 6, 2.8],
+      [42, 14, 5, 2.6], [56, 6, 5, 2.8], [64, 14, 5, 3],
     ],
   },
   {
     id: 'spa',
     name: 'Spa',
-    character: 'Long and quick, one stop-start chicane',
-    centerline: [
-      [14, 36, 2.66], [22, 36, 2.87], [29.5, 35.8, 2.21], [33.5, 33.4, 1.7], [38.5, 33.4, 1.7],
-      [42.5, 35.8, 2.21], [48, 36, 2.87], [54, 36, 3.2], [61, 34.8, 3.2], [66, 31, 3],
-      [67.5, 25.5, 3], [66, 20, 2.8], [62, 15, 2.8], [56, 10.5, 3], [48, 7, 3.2],
-      [40, 5, 3.2], [32, 5, 3], [24, 6.5, 2.8], [17, 10, 2.6], [13, 15, 2.6],
-      [13, 21, 2.8], [11, 27, 3], [11, 32, 2.66]
+    character: 'Fast and sweeping, with one long diagonal',
+    corners: [
+      [58, 36, 6, 3], [12, 36, 6, 3], [8, 26, 4, 2.8], [24, 6, 6, 3.2],
+      [36, 6, 5, 3], [64, 26, 6, 3],
     ],
   },
   {
     id: 'silverstone',
     name: 'Silverstone',
-    character: 'Open, with a run of fast switchbacks',
-    centerline: [
-      [14, 33, 3.4], [24, 33, 3.4], [34, 33, 3.4], [44, 33, 3.4], [54, 33, 3.2],
-      [61, 32, 3], [65, 28, 3], [65, 23, 3], [62, 19, 2.8], [56, 17, 2.8],
-      [50, 15, 2.8], [46, 11, 2.6], [40, 9, 2.6], [34, 11, 2.6], [28, 9, 2.6],
-      [22, 8, 2.8], [16, 10, 3], [11, 14, 3], [9, 20, 3.2], [9, 26, 3.2],
-      [10, 30, 3.2]
+    character: 'A detour down into the middle and back out',
+    corners: [
+      [56, 36, 6, 3.2], [8, 36, 6, 3.2], [8, 4, 6, 3], [25, 4, 5, 2.8],
+      [25, 20, 6, 2.8], [39, 20, 6, 2.8], [39, 4, 5, 2.8], [56, 4, 6, 3],
     ],
   },
   {
     id: 'monaco',
     name: 'Monaco',
-    character: 'Tight and technical, with a hairpin',
-    centerline: [
-      [12, 36, 1.66], [19, 36, 2.16], [26, 36, 2.4], [31.5, 35, 2.2], [36, 32.5, 2],
-      [38.5, 29, 2], [38, 25.5, 1.9], [35, 23.5, 1.9], [31, 23, 1.9], [27.5, 22, 1.9],
-      [25, 19.5, 1.9], [25.5, 16, 2], [28.5, 13.5, 2], [33, 12.5, 2.1], [37.5, 11.5, 2.1],
-      [41, 9, 2.1], [41.5, 5.5, 2], [38.5, 3, 2.2], [33.5, 2.6, 2.4], [28.5, 4, 2.2],
-      [24.5, 7, 2], [20.5, 10, 2], [16.5, 13, 2.2], [13.5, 16.5, 2.4], [11.5, 21, 2.6],
-      [12.5, 26.5, 2.03], [10.5, 31.5, 1.56]
+    character: 'Narrow and twisting, with a hairpin',
+    corners: [
+      [39, 37, 4, 2.2], [8, 37, 4, 2.2], [8, 6, 4, 2.1], [39, 6, 4, 2.1],
+      [39, 20, 4, 1.9], [19, 20, 3.5, 1.9], [19, 28, 3.5, 1.9], [39, 28, 4, 1.9],
     ],
   },
   {
     id: 'suzuka',
     name: 'Suzuka',
-    character: 'A long sequence of linked esses',
-    centerline: [
-      [14, 33, 2.39], [22, 33, 3.11], [29, 32, 2.8], [34, 29.5, 2.6], [39, 27.5, 2.6],
-      [44, 25.5, 2.6], [49, 23, 2.6], [54, 21, 2.8], [59, 18.5, 3], [63, 15, 3],
-      [64, 10.5, 2.8], [61, 6.8, 2.8], [56, 5, 3], [49, 4.5, 3], [42, 5, 3],
-      [35, 6.5, 2.8], [30, 9, 2.6], [27, 13, 2.4], [25, 17.5, 2.4], [21, 20.5, 2.6],
-      [15, 22, 2.8], [10, 25, 2.39], [8.5, 29.5, 1.84], [10.5, 32, 1.84]
+    character: 'Pinched in from both sides halfway down',
+    corners: [
+      [51, 36, 6, 3], [8, 36, 6, 3], [8, 26, 4, 2.8], [22.5, 20, 4, 2.8],
+      [8, 14, 4, 2.8], [8, 4, 6, 3], [51, 4, 6, 3], [51, 14, 4, 2.8],
+      [37, 20, 4, 2.8], [51, 26, 4, 2.8],
     ],
   },
   {
     id: 'interlagos',
     name: 'Interlagos',
-    character: 'Short and compact, run anti-clockwise',
-    centerline: [
-      [50, 33, 3.2], [42, 33, 2.87], [34.5, 32.8, 2.21], [30.5, 30.4, 1.7], [25.5, 30.4, 1.7],
-      [21.5, 32.8, 2.21], [16, 33, 2.87], [11, 30, 2.8], [8.5, 25.5, 2.8], [10.5, 20.5, 2.6],
-      [15, 17, 2.6], [20, 15, 2.6], [25, 11.5, 2.6], [31, 8.5, 2.8], [38, 7, 3],
-      [45, 7.5, 3], [51, 10.5, 2.8], [55, 15, 2.8], [56.5, 21, 3], [55.5, 27, 3],
-      [53.5, 31, 3.2]
+    character: 'An L, run anti-clockwise',
+    corners: [
+      [8, 36, 6, 3.2], [64, 36, 6, 3.2], [64, 20, 5, 3], [34, 20, 6, 3],
+      [34, 4, 6, 3], [8, 4, 6, 3],
     ],
   },
 ];
@@ -174,7 +166,7 @@ export function parseTrack(source) {
       throw new Error(`${where}: ${field} must be a non-empty string`);
     }
   }
-  const points = source.centerline;
+  const points = source.corners ? roundCorners(source.corners, where) : source.centerline;
   if (!Array.isArray(points) || points.length < 6) {
     throw new Error(`${where}: centerline needs at least 6 points`);
   }
@@ -235,6 +227,85 @@ export function parseTrack(source) {
   }
 
   return Object.freeze(track);
+}
+
+/**
+ * Turns a list of corners into a centreline: an arc round each corner, and a
+ * straight from the end of one arc to the start of the next.
+ *
+ * An arc of radius r round a corner that turns through an angle a starts and
+ * ends r·tan(a/2) from the corner. If the arcs at the two ends of a straight
+ * need more room than the straight has, the corners are too close together
+ * for their radii, and the track is refused.
+ */
+function roundCorners(corners, where) {
+  if (!Array.isArray(corners) || corners.length < 3) {
+    throw new Error(`${where}: corners needs at least 3 corners`);
+  }
+  for (const corner of corners) {
+    if (!Array.isArray(corner) || corner.length !== 4 || !corner.every(Number.isFinite)
+      || corner[2] <= 0) {
+      throw new Error(`${where}: corner ${JSON.stringify(corner)} is not [x, y, r, w]`);
+    }
+  }
+  const count = corners.length;
+  const arcs = corners.map(([x, y, r, w], index) => {
+    const [px, py] = corners[(index - 1 + count) % count];
+    const [nx, ny] = corners[(index + 1) % count];
+    const inward = unit(x - px, y - py);
+    const outward = unit(nx - x, ny - y);
+    const turn = Math.atan2(inward[0] * outward[1] - inward[1] * outward[0],
+      inward[0] * outward[0] + inward[1] * outward[1]);
+    const reach = r * Math.tan(Math.abs(turn) / 2);
+    const start = [x - inward[0] * reach, y - inward[1] * reach];
+    const end = [x + outward[0] * reach, y + outward[1] * reach];
+    // The centre of the arc is r to the side the track turns towards.
+    const side = Math.sign(turn);
+    const centre = [start[0] - inward[1] * side * r, start[1] + inward[0] * side * r];
+    const from = Math.atan2(start[1] - centre[1], start[0] - centre[0]);
+    const steps = Math.max(1, Math.ceil(Math.abs(turn) / (Math.PI / 12)));
+    const points = [];
+    for (let step = 0; step <= steps; step++) {
+      const angle = from + (turn * step) / steps;
+      points.push([centre[0] + r * Math.cos(angle), centre[1] + r * Math.sin(angle), w]);
+    }
+    return { start, end, reach, points, w };
+  });
+
+  const centerline = [];
+  arcs.forEach((arc, index) => {
+    const next = arcs[(index + 1) % count];
+    const [x, y] = corners[index];
+    const [nx, ny] = corners[(index + 1) % count];
+    if (arc.reach + next.reach > Math.hypot(nx - x, ny - y) + EPSILON) {
+      throw new Error(`${where}: the corners at ${x},${y} and ${nx},${ny} are too close `
+        + 'together for their radii');
+    }
+    for (const point of arc.points) {
+      const last = centerline[centerline.length - 1];
+      if (!last || Math.hypot(point[0] - last[0], point[1] - last[1]) > 0.01) centerline.push(point);
+    }
+    // Points along the straight, about as far apart as the points round the
+    // arcs: the spline through them bulges where the spacing jumps.
+    const length = Math.hypot(next.start[0] - arc.end[0], next.start[1] - arc.end[1]);
+    const pieces = Math.ceil(length / 1.5);
+    for (let piece = 1; piece < pieces; piece++) {
+      const t = piece / pieces;
+      centerline.push([
+        arc.end[0] + (next.start[0] - arc.end[0]) * t,
+        arc.end[1] + (next.start[1] - arc.end[1]) * t,
+        arc.w + (next.w - arc.w) * t,
+      ]);
+    }
+  });
+  const [first, last] = [centerline[0], centerline[centerline.length - 1]];
+  if (Math.hypot(first[0] - last[0], first[1] - last[1]) <= 0.01) centerline.pop();
+  return centerline;
+}
+
+function unit(x, y) {
+  const length = Math.hypot(x, y);
+  return [x / length, y / length];
 }
 
 /** Catmull-Rom through the centreline, sampled evenly, carrying the width along. */

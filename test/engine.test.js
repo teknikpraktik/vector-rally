@@ -2,9 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  MAX_SPEED, MOVES, applyMove, createInitialState, endRace, gateCrossings, isFinished,
-  legalMoves, mulberry32, pointInside, previewMove, replayHistory,
-  segmentInside, undoMove,
+  MAX_SPEED, MOVES, SPIN_TURNS, applyMove, createInitialState, gateCrossings, isFinished,
+  legalMoves, mulberry32, pointInside, previewMove, segmentInside,
 } from '../engine.js';
 import { defineTrack, listTracks } from '../tracks.js';
 
@@ -247,13 +246,16 @@ test('10. cars are points, and a move may not go through one', () => {
 
 test('11. with all nine moves unavailable the car crashes, and can move again next turn', () => {
   // At full speed only four moves are left, and the whole-number points on
-  // those four lines can be covered by three cars.
+  // those four lines can be covered by three cars: one a step along the
+  // diagonal blocks both diagonal lines, and the other two stand at the ends
+  // of the two lines that have no whole-number points in between.
+  const top = MAX_SPEED;
   const home = [30, 7];
   let state = race(OPEN, 4);
-  state = place(state, 0, { pos: home, vel: [MAX_SPEED, MAX_SPEED] });
+  state = place(state, 0, { pos: home, vel: [top, top] });
   state = place(state, 1, { pos: [home[0] + 1, home[1] + 1] });
-  state = place(state, 2, { pos: [home[0] + 4, home[1] + 5] });
-  state = place(state, 3, { pos: [home[0] + 5, home[1] + 4] });
+  state = place(state, 2, { pos: [home[0] + top - 1, home[1] + top] });
+  state = place(state, 3, { pos: [home[0] + top, home[1] + top - 1] });
   for (const player of state.players) {
     assert.equal(pointInside(OPEN, player.pos), true, `${player.pos} is off the track`);
   }
@@ -264,6 +266,7 @@ test('11. with all nine moves unavailable the car crashes, and can move again ne
   assert.deepEqual(after.players[0].vel, [0, 0]);
   assert.equal(after.players[0].crashes, 1);
   assert.equal(after.active, 1, 'and the turn passes on');
+  assert.equal(after.players[0].spin, 0, 'being boxed in is not a spin');
 
   after = applyMove(after, { ax: 0, ay: 0 });
   after = applyMove(after, { ax: 0, ay: 0 });
@@ -281,11 +284,12 @@ test('12. applying a move leaves the state it was given alone', () => {
   assert.deepEqual(state, before);
 });
 
-test('13. replaying the history reproduces the race exactly', () => {
+test('13. the same moves give the same race, every time', () => {
   const random = mulberry32(11);
-  let state = createInitialState({
+  const start = () => createInitialState({
     trackId: 'monza', seed: 4242, players: [{ name: 'A' }, { name: 'B' }],
   });
+  let state = start();
   for (let move = 0; move < 120 && !isFinished(state); move++) {
     const moves = legalMoves(state);
     state = applyMove(state, moves.length === 0
@@ -293,8 +297,10 @@ test('13. replaying the history reproduces the race exactly', () => {
       : moves[Math.floor(random() * moves.length)]);
   }
   assert.ok(state.history.length > 60, 'the race actually happened');
-  assert.deepEqual(replayHistory(state), state);
-  assert.equal(undoMove(state).history.length, state.history.length - 1);
+
+  let again = start();
+  for (const entry of state.history) again = applyMove(again, entry);
+  assert.deepEqual(again, state);
 });
 
 test('14. the speed limit cannot be exceeded', () => {
@@ -421,11 +427,44 @@ test('every car starts on the finish line, at a standstill', () => {
   assert.equal(spread.size, 4, 'and no two of them in the same place');
 });
 
-test('a race can be stopped early, and then nobody can move', () => {
-  const state = endRace(race(WIDE));
-  assert.equal(isFinished(state), true);
-  assert.deepEqual(legalMoves(state), []);
-  assert.throws(() => applyMove(state, { ax: 0, ay: 0 }), /over/);
+test('17. a car that leaves the track spins, and misses its next four turns', () => {
+  let state = race(WIDE, 2);
+  state = place(state, 0, { pos: [30, 10], vel: [0, -5] });
+  state = place(state, 1, { pos: [24, 8] });
+
+  state = applyMove(state, { ax: 0, ay: 0 });
+  assert.equal(state.players[0].crashes, 1);
+  assert.equal(state.players[0].spin, SPIN_TURNS);
+  assert.equal(state.active, 1, 'the other car drives on');
+
+  // Player 2 has every turn while player 1 spins round, a quarter each time.
+  for (let turn = 0; turn < SPIN_TURNS; turn++) {
+    assert.equal(state.active, 1, `turn ${turn}: still player 2`);
+    state = applyMove(state, { ax: 0, ay: 0 });
+    assert.equal(state.players[0].spin, SPIN_TURNS - 1 - turn);
+  }
+  assert.equal(state.active, 1, 'the fourth turn missed goes to player 2 too');
+  state = applyMove(state, { ax: 0, ay: 0 });
+  assert.equal(state.active, 0, 'and then player 1 is back');
+  assert.equal(pointInside(WIDE, state.players[0].pos), false, 'still off the track, to drive back on');
+});
+
+test('17b. alone on the track, a spin still costs four turns of the clock', () => {
+  const before = place(race(WIDE), 0, { pos: [30, 10], vel: [0, -5] });
+  const after = applyMove(before, { ax: 0, ay: 0 });
+  assert.equal(after.active, 0);
+  assert.equal(after.turn, before.turn + 1 + SPIN_TURNS);
+  assert.equal(after.players[0].spin, 0, 'the spin is over by the time it can move');
+});
+
+test('17c. when every car still racing is spinning, the race still moves on', () => {
+  let state = race(WIDE, 2);
+  state = place(state, 0, { pos: [30, 10], vel: [0, -5], spin: 0 });
+  state = place(state, 1, { spin: 2 });
+  state = applyMove(state, { ax: 0, ay: 0 });
+  assert.equal(isFinished(state), false);
+  assert.ok(state.players.some(player => player.spin === 0 && player.id === state.active),
+    'whoever has the turn is not spinning');
 });
 
 test('a race cannot be created without a seed', () => {

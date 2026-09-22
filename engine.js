@@ -12,13 +12,14 @@
  * travels in a straight line to position plus new velocity.
  *
  * A car that leaves the track comes to rest just outside it, at a standstill,
- * where it crossed the edge. It is not put back on: getting back on is another
- * turn, and from out there the only move it may make is one that returns it to
- * the track.
+ * where it crossed the edge, and spins round: it misses its next SPIN_TURNS
+ * turns. It is not put back on: getting back on is another turn after that,
+ * and from out there the only move it may make is one that returns it to the
+ * track.
  *
  * The track is an area with a curved edge, so the question "did that move stay
- * on the track" is asked of the whole line, not of its far end. At speed 5 the
- * line is five units long and can cut the corner out of a bend and back in
+ * on the track" is asked of the whole line, not of its far end. At speed 7 the
+ * line is seven units long and can cut the corner out of a bend and back in
  * again with both its ends still on the track. Testing only where the car
  * lands would miss exactly that.
  */
@@ -26,10 +27,21 @@
 import { EPSILON, getTrack } from './tracks.js';
 
 /** Bumped when the shape or the meaning of a saved state changes. */
-export const SCHEMA = 2;
+export const SCHEMA = 3;
 
 /** Neither velocity component may leave this range. */
-export const MAX_SPEED = 5;
+export const MAX_SPEED = 7;
+
+/**
+ * How many turns a car that leaves the track misses: it spins a full circle,
+ * a quarter of the way round each turn.
+ *
+ * Without this, leaving the track cost two turns and all the speed, and at
+ * top speed that could be cheaper than braking for the corner — so the fastest
+ * way round was to drive flat out and bounce off the edges. Four turns more
+ * makes braking pay again, which is the thing the game is here to teach.
+ */
+export const SPIN_TURNS = 4;
 
 /** The nine moves, in reading order, which is also the order of the 3x3 pad. */
 export const MOVES = Object.freeze([
@@ -61,11 +73,6 @@ export function mulberry32(seed) {
   };
 }
 
-/** A whole number in 0..bound-1 from a mulberry32 stream. */
-export function randomInt(random, bound) {
-  return Math.floor(random() * bound);
-}
-
 // ---------------------------------------------------------------------------
 // Geometry, as the rules need it
 // ---------------------------------------------------------------------------
@@ -89,7 +96,7 @@ export function segmentInside(track, from, to) {
 /**
  * Where a move crosses the gates, in the order it crosses them.
  *
- * One move at speed 5 can pass two gates, and taking them out of order would
+ * One move at speed 7 can pass two gates, and taking them out of order would
  * let a car collect the second checkpoint and skip the first — the same
  * mistake as jumping a wall, wearing a different hat.
  */
@@ -169,6 +176,7 @@ export function createInitialState({ trackId, players, laps = 1, seed, appVersio
       finished: false,
       finishTurn: null,
       crashes: 0,
+      spin: 0,
     })),
     history: [],
   };
@@ -185,14 +193,9 @@ function spreadAcross(places, count) {
 // Taking a turn
 // ---------------------------------------------------------------------------
 
-/** True once nobody is driving any more, whether the lap ran out or was stopped. */
+/** True once every car is home. */
 export function isFinished(state) {
   return state.status !== 'racing';
-}
-
-/** The player whose turn it is, or null once the race is over. */
-export function activePlayer(state) {
-  return isFinished(state) ? null : state.players[state.active];
 }
 
 /**
@@ -419,6 +422,9 @@ export function applyMove(state, move) {
     finished,
     finishTurn: finished ? state.turn : null,
     crashes: crashed ? player.crashes + 1 : player.crashes,
+    // Leaving the track is what spins a car. Being boxed in by other cars is
+    // not the driver's fault, and costs only the speed.
+    spin: outcome.crashes && !trapped ? SPIN_TURNS : 0,
   };
 
   const players = state.players.map(other => (other.id === updated.id ? updated : other));
@@ -429,53 +435,9 @@ export function applyMove(state, move) {
     turn: next.turn,
     active: next.active,
     status: next.status,
-    players,
+    players: next.players,
     history: [...state.history, { player: player.id, ax: chosen.ax, ay: chosen.ay }],
   };
-}
-
-/** Ends the race early. A lesson is forty minutes long. */
-export function endRace(state) {
-  if (isFinished(state)) return state;
-  return { ...state, status: 'ended' };
-}
-
-/** The state this race started from, rebuilt from the state's own description. */
-export function initialStateOf(state) {
-  return createInitialState({
-    trackId: state.trackId,
-    laps: state.laps,
-    seed: state.seed,
-    appVersion: state.appVersion,
-    players: state.players.map(player => ({
-      name: player.name,
-      color: player.color,
-    })),
-  });
-}
-
-/**
- * Replays a list of moves from the start of the race. Because every rule is a
- * pure function of the state, this reproduces the race exactly — which is also
- * what makes undo a two-line affair.
- */
-export function replayHistory(state, history = state.history) {
-  let replayed = initialStateOf(state);
-  for (const entry of history) replayed = applyMove(replayed, entry);
-  return replayed;
-}
-
-/** The race as it was one move ago. */
-export function undoMove(state) {
-  if (state.history.length === 0) return state;
-  return replayHistory(state, state.history.slice(0, -1));
-}
-
-/** The gate this player is looking for next: a checkpoint, or the finish line. */
-export function nextGate(state, player) {
-  const track = getTrack(state.trackId);
-  const number = player.checkpoints.length + 1;
-  return track.gates[number > track.checkpointCount ? 0 : number];
 }
 
 /** Players in race order: whoever is home first, then whoever has come furthest. */
@@ -513,7 +475,7 @@ export function stateFromJSON(text) {
   getTrack(state.trackId);
   if (!Number.isInteger(state.seed)) throw new Error('State has no seed');
   if (!Number.isInteger(state.laps)) throw new Error('State has no lap count');
-  if (!['racing', 'finished', 'ended'].includes(state.status)) {
+  if (!['racing', 'finished'].includes(state.status)) {
     throw new Error(`Unknown status ${JSON.stringify(state.status)}`);
   }
   if (!Array.isArray(state.players) || state.players.length === 0) {
@@ -526,23 +488,47 @@ export function stateFromJSON(text) {
     if (!Array.isArray(player.trace) || !Array.isArray(player.checkpoints)) {
       throw new Error(`Player ${index} has no trace or checkpoint list`);
     }
+    if (!Number.isInteger(player.spin) || player.spin < 0) {
+      throw new Error(`Player ${index} has no spin count`);
+    }
   });
   if (!Array.isArray(state.history)) throw new Error('State has no history');
   return state;
 }
 
+/**
+ * Whose turn it is next. A car that is spinning is passed over, and each time
+ * it is passed over it has one turn fewer left to spin — so a spinning car
+ * misses exactly SPIN_TURNS of its own turns, however many are playing.
+ *
+ * This always stops: every pass over a spinning car brings its count down,
+ * so sooner or later some car that is still racing has a count of zero.
+ */
 function nextPlayer(state, players) {
-  const count = players.length;
-  for (let step = 1; step <= count; step++) {
-    const index = (state.active + step) % count;
+  if (players.every(player => player.finished)) {
+    return { active: state.active, turn: state.turn, status: 'finished', players };
+  }
+  const spins = players.map(player => player.spin);
+  let index = state.active;
+  let turn = state.turn;
+  for (;;) {
+    index += 1;
+    if (index === players.length) {
+      index = 0;
+      turn += 1;
+    }
     if (players[index].finished) continue;
+    if (spins[index] > 0) {
+      spins[index] -= 1;
+      continue;
+    }
     return {
       active: index,
-      turn: state.turn + (state.active + step >= count ? 1 : 0),
+      turn,
       status: 'racing',
+      players: players.map((player, at) => ({ ...player, spin: spins[at] })),
     };
   }
-  return { active: state.active, turn: state.turn, status: 'finished' };
 }
 
 function normalizeMove(move) {
